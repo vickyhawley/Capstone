@@ -5,7 +5,6 @@
   "buildCommand": "",
   "functions": {
     "api/[[...route]].ts": {
-      "runtime": "@vercel/node@5.0.0",
       "maxDuration": 60
     }
   }
