@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
-  "buildCommand": "cd ../.. && pnpm --filter @groundwork/api typecheck",
+  "buildCommand": "",
   "functions": {
     "api/[[...route]].ts": {
       "runtime": "@vercel/node@5.0.0",
