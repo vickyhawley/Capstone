@@ -1,0 +1,37 @@
+name: Post-deploy smoke
+
+# Runs the smoke check against production. Triggers:
+#   - push to main: catch a broken deploy triggered by that merge
+#   - schedule: catch config drift from Vercel-side changes (env var
+#     rotated, integration removed, project renamed)
+#   - manual: run on demand after fixing something in production
+#
+# Deploy propagation from a main push takes ~30-60s; the smoke script
+# has retry-with-backoff so this workflow doesn't need its own sleep.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Hourly. Cheap (~5s runtime) and catches things like a rotated
+    # Upstash token before the next deploy would surface it.
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Smoke
+        run: node scripts/smoke.mjs

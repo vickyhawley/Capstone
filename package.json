@@ -13,6 +13,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "check:core-purity": "node scripts/check-core-purity.mjs",
+    "smoke": "node scripts/smoke.mjs",
     "dev": "pnpm -r --parallel --if-present dev",
     "dev:web": "pnpm --filter @groundwork/web dev",
     "dev:api": "pnpm --filter @groundwork/api dev"

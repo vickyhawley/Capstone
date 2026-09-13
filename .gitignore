@@ -15,11 +15,9 @@ build/
 coverage/
 .nyc_output/
 
-# Vercel — .vercel is the CLI's link file; .vercel.* covers backup dirs
-# from the "swap-project-links-in-one-directory" pattern used when deploying
-# multiple projects from the monorepo root.
+# Vercel — .vercel is the CLI's link file, one per project. Each app has
+# its own .vercel/ (linked via `vercel link` from inside apps/<name>).
 .vercel/
-.vercel.*/
 
 # Supabase local dev
 supabase/.branches/

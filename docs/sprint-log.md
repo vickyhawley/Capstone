@@ -121,6 +121,32 @@ the fixes:
   Marketplace integration injects `KV_REST_API_URL/TOKEN` instead. Added
   fallback (accepts either shape), covered by four new unit tests.
 
+### Post-deploy tidy-ups (added after GW-09 landed)
+Three follow-ups spun out of the deploy session, all shipped:
+- Smoke check — `scripts/smoke.mjs` (Node ESM, no deps) asserts 200 +
+  `rateLimit.configured: true` on both origins and that the web-origin
+  payload matches the API's. Runs via `pnpm smoke` locally and via
+  `.github/workflows/smoke.yml` on push-to-main + hourly cron. Every
+  failure recorded in the config-drift section above would have been
+  caught by this in seconds.
+- Deploy pattern rewritten — the link-swap dance is deleted. Each app
+  owns its own `.vercel/`; deploys are `vercel --prod --cwd apps/<app>`
+  from the repo root. `.gitignore` reverted to just `.vercel/`. README
+  deploy section updated accordingly.
+- `docs/ai-assisted-development.md` — added a Sprint 1 prep entry
+  covering the four config drifts in structured form (Asserted / True /
+  Found by / Locally detectable). Frame: internal consistency is not
+  external correctness; the counter-move is deploying the thin shell
+  first, before elaborating.
+
+### Vercel plan constraint (noted, not fixed)
+The web project was renamed `capstone-web` → `groundwork-web` in the
+Vercel dashboard, but the public alias stays as `capstone-web-ten.vercel.app`
+because Hobby-plan projects can't add new `*.vercel.app` aliases after
+creation. Documented in README; the URL is centralised in
+`scripts/smoke.mjs` so a future rename (or plan upgrade) is a
+three-file change, not a scavenger hunt.
+
 ### Didn't ship
 - (Nothing outstanding from this sprint prep.)
 
