@@ -83,8 +83,15 @@ report the change here rather than paper over it.
 
 ### Shipped
 - GW-37: rate limiting middleware (Upstash Redis), fail-closed in prod.
-- GW-09: API deployed to Vercel — <https://groundwork-api.vercel.app>.
-  Health at `/api/health` returns 200 with `rateLimit.configured: true`.
+- GW-09: both origins deployed and the same-origin rewrite verified end
+  to end.
+  - API: <https://groundwork-api.vercel.app/api/health> → 200.
+  - Web: <https://capstone-web-ten.vercel.app/api/health> → same JSON via
+    the rewrite in `apps/web/vercel.json`.
+- ADR-0002 (iteration vs timeout): `MAX_ITERATIONS` dropped from 32 to 8
+  so the iteration counter is reachable within the 25 s wall-clock
+  budget. At 32 the counter was decorative — every stop was a torn
+  timeout. Change is visible in `/api/health` at both origins.
 - Filtered vector search strategy chosen (F2, over-fetch + fallback);
   ADR-0001 updated.
 - `ts_rank` correction — sparse index note in ADR-0001 (it is not BM25).
@@ -96,10 +103,26 @@ report the change here rather than paper over it.
 - Eval harness skeleton (`evals/` Python package), three fixture cases
   clearly marked as harness self-test, evals.yml wired to the harness.
 
+### Config drift found during GW-09 (fixed in-flight)
+Four Sprint 0 scaffolding defaults that read plausibly from library docs
+but broke at first deploy. Recording so the pattern is visible, not just
+the fixes:
+- `engines.node = >=24` and `.nvmrc = 24` — Vercel max is 22.x. Relaxed
+  to `>=22 <23` / `22`.
+- `apps/api/vercel.json` pinned `runtime: "@vercel/node@5.0.0"` —
+  produced CJS `exports` in an ESM-typed package. Removed; default
+  runtime handles ESM correctly.
+- `apps/api/api/[[...route]].ts` used `hono/vercel`'s `handle(app)` as
+  default export — modern Vercel Node runtime treats default exports as
+  `(req, res) => void` and drops returned Responses, causing 60 s
+  timeouts. Replaced with named HTTP-method exports delegating to
+  `app.fetch`.
+- Rate limiter read `UPSTASH_REDIS_REST_URL/TOKEN` — Vercel's Upstash
+  Marketplace integration injects `KV_REST_API_URL/TOKEN` instead. Added
+  fallback (accepts either shape), covered by four new unit tests.
+
 ### Didn't ship
-- Web app deployment (tracked as GW-09b, next). Requires
-  `apps/web/vercel.json` already points at the deployed API — deploy
-  is mechanical once the URL is stable, which it now is.
+- (Nothing outstanding from this sprint prep.)
 
 ### Eval delta
 - N/A — harness ships this sprint; first real numbers land in Sprint 1

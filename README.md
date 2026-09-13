@@ -10,8 +10,11 @@ engineering decisions as much as on working code.
 
 ## Deployed URL
 
-- API: <https://groundwork-api.vercel.app> — health at `/api/health`.
-- Web: deployed separately (GW-09b, tracked below).
+- Web (public): <https://capstone-web-ten.vercel.app> — same-origin rewrite
+  sends `/api/*` to the API. Verify with:
+  `curl https://capstone-web-ten.vercel.app/api/health`.
+- API (direct): <https://groundwork-api.vercel.app/api/health> — same JSON
+  as above, useful for isolating API vs rewrite in incident triage.
 
 ## Project board
 
