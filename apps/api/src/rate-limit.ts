@@ -27,10 +27,14 @@ const SKIP_PATHS = new Set(['/health', '/api/health']);
  * Constructs a real Upstash-backed limiter. Returns null if env vars are
  * absent, so local dev without Upstash configured is permit-all — but see
  * `assertLimiterOrFail` for the prod safety net.
+ *
+ * Accepts either the raw Upstash names (`UPSTASH_REDIS_REST_URL/TOKEN`) or
+ * Vercel's normalized KV names (`KV_REST_API_URL/TOKEN`). Vercel's Upstash
+ * Marketplace integration only injects the `KV_*` shape.
  */
 export function createRedisRateLimiter(env: NodeJS.ProcessEnv = process.env): RateLimiter | null {
-  const url = env['UPSTASH_REDIS_REST_URL'];
-  const token = env['UPSTASH_REDIS_REST_TOKEN'];
+  const url = env['UPSTASH_REDIS_REST_URL'] ?? env['KV_REST_API_URL'];
+  const token = env['UPSTASH_REDIS_REST_TOKEN'] ?? env['KV_REST_API_TOKEN'];
   if (!url || !token) return null;
 
   const redis = new Redis({ url, token });
@@ -61,7 +65,7 @@ export function assertLimiterOrFail(
   if (limiter) return;
   if (env['NODE_ENV'] === 'production') {
     throw new Error(
-      'Rate limiter not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in production.',
+      'Rate limiter not configured. Set UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN (or Vercel-provisioned KV_REST_API_URL/KV_REST_API_TOKEN) in production.',
     );
   }
 }

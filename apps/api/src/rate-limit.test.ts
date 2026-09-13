@@ -5,6 +5,7 @@ import {
   type RateLimiter,
   assertLimiterOrFail,
   createRateLimitMiddleware,
+  createRedisRateLimiter,
   resolveClientIp,
 } from './rate-limit.js';
 
@@ -85,6 +86,40 @@ describe('rate-limit middleware', () => {
     expect(res.headers.get('retry-after')).toMatch(/^\d+$/);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('rate-limited');
+  });
+});
+
+describe('createRedisRateLimiter env resolution', () => {
+  it('returns null when no env vars are present (dev)', () => {
+    expect(createRedisRateLimiter({} as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  it('accepts Vercel-normalized KV_REST_API_* names', () => {
+    const limiter = createRedisRateLimiter({
+      KV_REST_API_URL: 'https://example.upstash.io',
+      KV_REST_API_TOKEN: 'token-value',
+    } as NodeJS.ProcessEnv);
+    expect(limiter).not.toBeNull();
+  });
+
+  it('accepts raw UPSTASH_REDIS_REST_* names', () => {
+    const limiter = createRedisRateLimiter({
+      UPSTASH_REDIS_REST_URL: 'https://example.upstash.io',
+      UPSTASH_REDIS_REST_TOKEN: 'token-value',
+    } as NodeJS.ProcessEnv);
+    expect(limiter).not.toBeNull();
+  });
+
+  it('prefers UPSTASH_* over KV_* when both are set', () => {
+    // Belt-and-braces case: if a project sets both (e.g. after switching
+    // integrations), the explicit Upstash names win so behaviour is predictable.
+    const limiter = createRedisRateLimiter({
+      UPSTASH_REDIS_REST_URL: 'https://explicit.upstash.io',
+      UPSTASH_REDIS_REST_TOKEN: 'explicit-token',
+      KV_REST_API_URL: 'https://kv.upstash.io',
+      KV_REST_API_TOKEN: 'kv-token',
+    } as NodeJS.ProcessEnv);
+    expect(limiter).not.toBeNull();
   });
 });
 
