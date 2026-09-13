@@ -1,12 +1,13 @@
 /**
  * Per-request iteration bound.
  *
- * Guards any loop in the pipeline (planner iterations, streamed chunks,
- * tool-call retries). Sized generously — the real ceiling is the time
- * budget below, not this counter — but a hard integer bound exists so a
- * runaway loop can never produce unbounded steps even if a clock is wrong.
+ * Guards any loop in the pipeline (planner iterations, tool-call retries,
+ * retrieval passes). Sized so that at realistic per-iteration cost the
+ * counter is reachable within the wall-clock budget — otherwise the
+ * timeout always fires first and the bound is decorative. See
+ * docs/adr/0002-iteration-vs-timeout.md for the sizing argument.
  */
-export const MAX_ITERATIONS = 32;
+export const MAX_ITERATIONS = 8;
 
 /**
  * Per-request wall-clock budget in milliseconds.
@@ -15,6 +16,7 @@ export const MAX_ITERATIONS = 32;
  * below the ~60 s streaming keep-alive most CDNs enforce, so a slow
  * request yields a graceful timeout with a partial trace rather than a
  * platform-level kill mid-stream. Sprint 1 may reduce this per-endpoint.
+ * The iteration bound above is the primary stop; this is the safety net.
  */
 export const TIME_BUDGET_MS = 25_000;
 
