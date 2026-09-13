@@ -1,0 +1,24 @@
+export { NotImplementedError } from './errors.js';
+
+export type { Retriever, RetrievalQuery, RetrievedChunk } from './ports/retriever.js';
+export type {
+  LanguageModel,
+  CompletionRequest,
+  CompletionChunk,
+  Message,
+  Role,
+} from './ports/language-model.js';
+export type {
+  ToolRegistry,
+  ToolDefinition,
+  ToolInvocation,
+  ToolResult,
+} from './ports/tool-registry.js';
+export type { TraceSink, Span, SpanKind } from './ports/trace-sink.js';
+export type {
+  CatalogueRepository,
+  Product,
+  ProductVariant,
+  StockLevel,
+} from './ports/catalogue-repository.js';
+export type { Reranker, RerankableCandidate, RerankedCandidate } from './ports/reranker.js';

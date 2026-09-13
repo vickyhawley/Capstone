@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# Vite / React
+.vite/
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Vercel
+.vercel/
+
+# Supabase local dev
+supabase/.branches/
+supabase/.temp/
+
+# Python (eval harness)
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+# Keep sprint result files committed as evidence, but never local scratch runs
+evals/results/sprint-0-smoke/
+evals/results/sprint-prep-local/
+
+# Env — never commit
+.env
+.env.local
+.env.*.local
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.log

@@ -1,0 +1,7 @@
+{
+  "groundedness": 0.75,
+  "retrieval_relevance": 0.60,
+  "recall_at_k": 0.70,
+  "correct_abstention": 0.90,
+  "false_refusal": 0.05
+}

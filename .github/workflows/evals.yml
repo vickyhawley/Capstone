@@ -1,0 +1,55 @@
+name: Evals
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evals:
+    name: Groundwork eval harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: evals
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: evals/pyproject.toml
+
+      - name: Install harness + dev deps
+        run: pip install -e ".[dev]"
+
+      - name: Harness self-tests
+        run: pytest -q
+
+      # The runner talks to the deployed API. Point it at the API URL via
+      # secret; fall back to the known production URL so a fork's PR
+      # without secrets still exercises the harness.
+      - name: Run evals (fixture dataset)
+        env:
+          GROUNDWORK_API_URL: ${{ secrets.GROUNDWORK_API_URL || 'https://groundwork-api.vercel.app' }}
+        run: |
+          python -m groundwork_evals.runner \
+            --dataset datasets/fixtures/harness-smoke.jsonl \
+            --thresholds thresholds/fixtures.json \
+            --sprint prep \
+            --api-url "$GROUNDWORK_API_URL" \
+            --results-dir results
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: evals/results/**
