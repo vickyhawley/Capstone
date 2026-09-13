@@ -83,6 +83,8 @@ report the change here rather than paper over it.
 
 ### Shipped
 - GW-37: rate limiting middleware (Upstash Redis), fail-closed in prod.
+- GW-09: API deployed to Vercel — <https://groundwork-api.vercel.app>.
+  Health at `/api/health` returns 200 with `rateLimit.configured: true`.
 - Filtered vector search strategy chosen (F2, over-fetch + fallback);
   ADR-0001 updated.
 - `ts_rank` correction — sparse index note in ADR-0001 (it is not BM25).
@@ -95,8 +97,9 @@ report the change here rather than paper over it.
   clearly marked as harness self-test, evals.yml wired to the harness.
 
 ### Didn't ship
-- GW-09 (public URL live) — depends on manual `vercel deploy`; URL
-  lands in README when the deploy completes.
+- Web app deployment (tracked as GW-09b, next). Requires
+  `apps/web/vercel.json` already points at the deployed API — deploy
+  is mechanical once the URL is stable, which it now is.
 
 ### Eval delta
 - N/A — harness ships this sprint; first real numbers land in Sprint 1

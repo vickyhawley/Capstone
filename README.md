@@ -10,7 +10,8 @@ engineering decisions as much as on working code.
 
 ## Deployed URL
 
-`https://TODO.vercel.app` — set after first production deploy.
+- API: <https://groundwork-api.vercel.app> — health at `/api/health`.
+- Web: deployed separately (GW-09b, tracked below).
 
 ## Project board
 
