@@ -20,7 +20,14 @@ ExpectedBehavior = Literal["answer", "abstain", "escalate"]
 
 
 class EvalCase(BaseModel):
-    """A single labelled case in an eval dataset."""
+    """A single labelled case in an eval dataset.
+
+    `tags` is an open-ended list for cross-cutting case categories
+    that don't map to a single intent — e.g. `three-state-stock`
+    (in-catalogue vs orderable vs unavailable) or `source-contradiction`
+    (corpus contains disagreeing information). Captured but not
+    sliced by the runner today; see evals/datasets/README.md §3.
+    """
 
     id: str
     intent: Intent
@@ -29,6 +36,7 @@ class EvalCase(BaseModel):
     required_source_ids: list[str] = Field(default_factory=list)
     prohibited_claims: list[str] = Field(default_factory=list)
     provenance: str
+    tags: list[str] = Field(default_factory=list)
 
     model_config = {"extra": "forbid"}
 

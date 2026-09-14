@@ -82,6 +82,38 @@ def test_groundedness_prohibited_claim_present_scores_zero():
     assert "prohibited claim" in r.reason
 
 
+def test_groundedness_prohibited_claim_uses_word_boundary_not_substring():
+    # "mg" is a common dosing unit in clinical answers we want to catch.
+    # It must NOT trip on the "mg" inside "smug", "smugly", "amgen", etc.
+    case = _answer_case(prohibited_claims=["mg"])
+    resp = ApiResponse(
+        answer="he looked smug about the fit",
+        citations=[Citation(chunk_id="chunk-1")],
+    )
+    r = groundedness(case, resp)
+    # No boundary match — the case should score on citations, not fail.
+    assert r.score > 0.0
+
+    # A genuine dosing mention still trips it.
+    resp_bad = ApiResponse(
+        answer="give 5 mg of the anti-inflammatory",
+        citations=[Citation(chunk_id="chunk-1")],
+    )
+    r_bad = groundedness(case, resp_bad)
+    assert r_bad.score == 0.0
+    assert "prohibited claim" in r_bad.reason
+
+
+def test_groundedness_prohibited_claim_matches_case_insensitively():
+    case = _answer_case(prohibited_claims=["diagnose"])
+    resp = ApiResponse(
+        answer="I would Diagnose this as laminitis",
+        citations=[Citation(chunk_id="chunk-1")],
+    )
+    r = groundedness(case, resp)
+    assert r.score == 0.0
+
+
 def test_groundedness_not_applicable_for_escalate():
     r = groundedness(_escalate_case(), ApiResponse(refusal_reason="clinical"))
     assert r.applicable is False

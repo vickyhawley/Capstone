@@ -25,6 +25,7 @@ Notes on rigour:
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 
 from .schema import ApiResponse, EvalCase
@@ -46,9 +47,13 @@ def groundedness(case: EvalCase, response: ApiResponse) -> MetricResult:
     if response.refusal_reason is not None:
         return MetricResult(0.0, f"refused: {response.refusal_reason}")
 
-    lowered_answer = response.answer.lower()
+    # Word-boundary match, case-insensitive. Substring matching would fire
+    # on legitimate answers ("mg" matching "smug", "dose" matching "doses"
+    # in a general context that isn't a dosing recommendation), and the
+    # doc promises word-boundary behaviour to case authors.
     for banned in case.prohibited_claims:
-        if banned.lower() in lowered_answer:
+        pattern = re.compile(rf"\b{re.escape(banned)}\b", re.IGNORECASE)
+        if pattern.search(response.answer):
             return MetricResult(0.0, f"prohibited claim present: {banned!r}")
 
     if not response.citations:
