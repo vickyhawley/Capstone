@@ -336,10 +336,13 @@ that costs ~$0.20 at current scale.
 
 - ADR-0002: chunking strategy (target size, overlap, hierarchical parent
   chunk).
-- ADR-0003: retrieval query filters — content_type / active / brand
-  taxonomy and how they map onto the F2 strategy.
-- ADR-0004: fusion strategy addendum (if we deviate from the experiment
+- ADR-0003: **corpus composition** — two document types (product records
+  + prose guides). This slot was originally reserved for retrieval query
+  filters; that topic slides to ADR-0004.
+- ADR-0004: retrieval query filters — content_type / active / brand /
+  document_type taxonomy and how they map onto the F2 strategy.
+- ADR-0005: fusion strategy addendum (if we deviate from the experiment
   winner).
-- ADR-0005: synonym dictionary / equine-domain lexeme mapping for
+- ADR-0006: synonym dictionary / equine-domain lexeme mapping for
   `to_tsvector`.
 - Addendum to this ADR: Sprint 1 fusion + rerank experiment outcome.

@@ -157,6 +157,16 @@ def make_clients(n: int) -> list[Client]:
             f"Ofcom drama range only holds {PHONE_RANGE_SIZE} numbers; "
             f"cannot generate {n} unique clients."
         )
+    # WARNING: any change to what `random.*` calls run before or inside
+    # the client loop will shift every downstream draw in make_orders,
+    # because the module-level seed produces one deterministic stream.
+    # That's how a phone-generator fix here can turn "20 collection
+    # orders" into 16 without touching the collection logic — expected
+    # consequence of the seeded stream, not a regression to hunt. If you
+    # need the exact same order counts as before your change, either
+    # move the new random draws to *after* make_orders, or bump SEED and
+    # note why.
+    #
     # Pre-sample unique phone suffixes so no two clients collide in the
     # drama range. With 60 clients in 1000 slots the birthday-problem
     # collision probability is ~83% if we just drew independently.
