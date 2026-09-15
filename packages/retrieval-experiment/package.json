@@ -10,7 +10,8 @@
     "build": "tsc",
     "test": "vitest run",
     "retrieve": "tsx --env-file=../../.env.local src/run-experiment.ts",
-    "backfill-embeddings": "tsx --env-file=../../.env.local src/backfill-embeddings.ts"
+    "backfill-embeddings": "tsx --env-file=../../.env.local src/backfill-embeddings.ts",
+    "router-baseline": "tsx --env-file=../../.env.local src/router-baseline.ts"
   },
   "dependencies": {
     "@groundwork/adapters": "workspace:*",
