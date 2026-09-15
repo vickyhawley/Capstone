@@ -5,6 +5,7 @@ from groundwork_evals.metrics import (
     correct_abstention,
     false_refusal,
     groundedness,
+    intent_classification_accuracy,
     recall_at_k,
     retrieval_relevance,
 )
@@ -231,3 +232,48 @@ def test_aggregate_ignores_non_applicable():
     assert aggs["groundedness"].n_total == 3
     assert aggs["correct_abstention"].n_applicable == 0
     assert aggs["false_refusal"].higher_is_better is False
+
+
+# ---------- intent classification accuracy (GW-10) ----------
+
+
+def test_intent_classification_scores_1_on_match():
+    case = _answer_case(intent="product")
+    resp = ApiResponse(intent="product")
+    r = intent_classification_accuracy(case, resp)
+    assert r.score == 1.0
+    assert r.applicable is True
+
+
+def test_intent_classification_scores_0_on_mismatch():
+    case = _answer_case(intent="product")
+    resp = ApiResponse(intent="welfare-clinical")
+    r = intent_classification_accuracy(case, resp)
+    assert r.score == 0.0
+    assert r.applicable is True
+    assert "predicted=welfare-clinical" in r.reason
+
+
+def test_intent_classification_na_when_response_missing_intent():
+    # Pre-Sprint-2 API shape returns no intent field. Metric should be
+    # non-applicable rather than scoring 0 — otherwise pre-router runs
+    # trigger a false failure on the intent threshold.
+    case = _answer_case(intent="product")
+    resp = ApiResponse()  # intent defaults to None
+    r = intent_classification_accuracy(case, resp)
+    assert r.applicable is False
+
+
+def test_intent_classification_applicable_on_all_expected_behaviors():
+    # Unlike retrieval metrics, this applies to answer / abstain /
+    # escalate alike — the router should classify every query.
+    for beh, intent in [
+        ("answer", "product"),
+        ("escalate", "welfare-clinical"),
+        ("abstain", "out-of-scope"),
+    ]:
+        case = _answer_case(expected_behavior=beh, intent=intent)
+        resp = ApiResponse(intent=intent)
+        r = intent_classification_accuracy(case, resp)
+        assert r.applicable is True
+        assert r.score == 1.0

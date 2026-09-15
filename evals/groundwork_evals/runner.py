@@ -113,6 +113,12 @@ def run(args: argparse.Namespace) -> int:
     aggregates = aggregate(per_metric_lists)
     breaches: list[Breach] = find_breaches(aggregates, thresholds)
 
+    # Per-intent breakdown for intent_classification_accuracy. ADR-0010
+    # argues the aggregate hides class-specific problems — welfare-clinical
+    # at n=4 disappears into the mean. Emit the per-class table so
+    # misrouting is visible per class in the results file.
+    intent_breakdown = _per_intent_intent_accuracy(cases, per_case_results)
+
     write_results(
         args.results_dir,
         args.sprint,
@@ -123,6 +129,7 @@ def run(args: argparse.Namespace) -> int:
         thresholds,
         breaches,
         per_case_results,
+        intent_breakdown,
     )
 
     if breaches:
@@ -137,6 +144,36 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _per_intent_intent_accuracy(
+    cases: list[EvalCase],
+    outcomes: list[CaseOutcome],
+) -> dict[str, dict[str, Any]]:
+    """Per-intent breakdown of intent_classification_accuracy.
+
+    Reads directly from the per-case outcomes rather than recomputing.
+    Groups by the case's *actual* intent (not the router's prediction)
+    so the reported number is per-class recall — the metric that
+    surfaces misrouting per class.
+    """
+    by_intent: dict[str, dict[str, int]] = {}
+    for case, outcome in zip(cases, outcomes):
+        m = outcome.metrics.get("intent_classification_accuracy")
+        if m is None or not m.get("applicable", True):
+            continue
+        bucket = by_intent.setdefault(case.intent, {"correct": 0, "total": 0})
+        bucket["total"] += 1
+        if m["score"] >= 1.0:
+            bucket["correct"] += 1
+    return {
+        intent: {
+            "correct": v["correct"],
+            "total": v["total"],
+            "accuracy": v["correct"] / v["total"] if v["total"] else 0.0,
+        }
+        for intent, v in sorted(by_intent.items())
+    }
+
+
 def write_results(
     results_dir: Path,
     sprint: str,
@@ -147,6 +184,7 @@ def write_results(
     thresholds: dict[str, float],
     breaches: list[Breach],
     cases: list[CaseOutcome],
+    intent_breakdown: dict[str, dict[str, Any]] | None = None,
 ) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     sprint_dir = results_dir / f"sprint-{sprint}"
@@ -173,6 +211,8 @@ def write_results(
         "breaches": [asdict(b) for b in breaches],
         "cases": [asdict(c) for c in cases],
     }
+    if intent_breakdown:
+        payload["intent_classification_by_intent"] = intent_breakdown
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, sort_keys=False)
     return out_path

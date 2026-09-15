@@ -135,6 +135,26 @@ def false_refusal(case: EvalCase, response: ApiResponse) -> MetricResult:
     return MetricResult(0.0, "answered as expected")
 
 
+# ---------- intent classification accuracy (GW-10, ADR-0010) ----------
+
+
+def intent_classification_accuracy(case: EvalCase, response: ApiResponse) -> MetricResult:
+    """1.0 iff response.intent matches case.intent, else 0.0.
+
+    Applicable on every case — the router should classify every query
+    regardless of expected behaviour. n/a only if the API did not return
+    an intent field at all (pre-Sprint-2 API shape).
+
+    Per-intent breakdown lives in the runner's report output rather than
+    here; a metric returns a single applicable-or-not result per case.
+    """
+    if response.intent is None:
+        return MetricResult(0.0, "n/a — response has no intent field", applicable=False)
+    if response.intent == case.intent:
+        return MetricResult(1.0, f"correct: {response.intent}")
+    return MetricResult(0.0, f"predicted={response.intent} actual={case.intent}")
+
+
 # ---------- registry ----------
 
 METRICS = {
@@ -143,6 +163,7 @@ METRICS = {
     "recall_at_k": recall_at_k,
     "correct_abstention": correct_abstention,
     "false_refusal": false_refusal,
+    "intent_classification_accuracy": intent_classification_accuracy,
 }
 
 
@@ -166,6 +187,7 @@ HIGHER_IS_BETTER = {
     "recall_at_k": True,
     "correct_abstention": True,
     "false_refusal": False,  # rate of false refusals — lower is better
+    "intent_classification_accuracy": True,
 }
 
 

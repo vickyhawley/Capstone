@@ -63,6 +63,17 @@ class ApiResponse(BaseModel):
     `refusal_reason` non-null means the assistant declined to answer.
     `retrieved_chunk_ids` is the top-k retrieval result (before rerank if
     any) — needed for recall@k and retrieval_relevance metrics.
+
+    Router fields (added Sprint 2, GW-10, per ADR-0010):
+    - `intent` is the router's classification. Optional so pre-router
+      Sprint 1 responses still validate; the Sprint 2 API always
+      populates it.
+    - `adversarial_suspected` is true iff a safety-signal rule fired
+      on the query. Orthogonal to intent — a message can be
+      `intent='fit', adversarial_suspected=True` when a legitimate
+      query carries an injection payload (ADR-0010 amendment 1).
+    - `adversarial_pattern` names the rule that fired, when
+      applicable.
     """
 
     answer: str = ""
@@ -70,6 +81,10 @@ class ApiResponse(BaseModel):
     retrieved_chunk_ids: list[str] = Field(default_factory=list)
     refusal_reason: str | None = None
     trace_id: str | None = None
+
+    intent: Intent | None = None
+    adversarial_suspected: bool = False
+    adversarial_pattern: str | None = None
 
     model_config = {"extra": "ignore"}
 

@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { createAnswerRoute, defaultAnswerDeps } from './answer.js';
 import { MAX_ITERATIONS, TIME_BUDGET_MS, withTimeBudget } from './limits.js';
 import {
   assertLimiterOrFail,
@@ -9,6 +10,12 @@ import {
 
 const limiter = createRedisRateLimiter();
 assertLimiterOrFail(limiter);
+
+let answerDepsCache: ReturnType<typeof defaultAnswerDeps> | null = null;
+function getAnswerDeps() {
+  answerDepsCache ??= defaultAnswerDeps();
+  return answerDepsCache;
+}
 
 export const app = new Hono();
 
@@ -64,3 +71,20 @@ app.get('/api/stream/demo', (c) => {
     });
   });
 });
+
+// POST /api/answer — router-only shape for Sprint 2 (GW-10 landed,
+// GW-11 pending). Route is registered once; deps are built lazily
+// on first request inside the handler so a missing OPENAI_API_KEY
+// produces a 500 with a clear message rather than an import-time
+// crash the deploy log buries.
+app.route(
+  '/api/answer',
+  createAnswerRoute({
+    router: {
+      async route(query) {
+        const deps = getAnswerDeps();
+        return deps.router.route(query);
+      },
+    },
+  }),
+);

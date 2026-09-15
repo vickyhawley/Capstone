@@ -35,6 +35,9 @@ importers:
       hono:
         specifier: ^4.6.14
         version: 4.13.7
+      openai:
+        specifier: ^7.15.0
+        version: 7.15.0(ws@8.21.3)
     devDependencies:
       '@types/node':
         specifier: ^22.10.5
