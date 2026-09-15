@@ -948,3 +948,123 @@ bound is tight.
   weakness — when retrieval + synthesis land, verify 006 becomes
   correct end-to-end, and if not, name where the catch actually
   belongs.
+
+### GW-12 close-out (2026-09-15)
+
+**Story:** Escalation + abstain copy. The safety gate (GW-11) emits
+a `Behaviour` with three escalation targets (`vet` / `staff-service`
+/ `staff-order`) and one used refusal reason (`out-of-scope`). This
+story provides the customer-facing copy for each, populates the
+`answer` field on abstain/escalate responses, and adds a
+`no_prohibited_claims` metric so the "no clinical language" rule
+and the adversarial-persona-leak prohibitions are gated by the
+harness — not just by manual review.
+
+**As-measured result — 18/18 = 100.0% no_prohibited_claims.**
+
+| axis | value |
+| --- | --- |
+| no_prohibited_claims applicable cases | 18/40 (10 answer, 3 abstain, 5 escalate) |
+| pass rate | 18/18 = 100% |
+| welfare (mg/ml/administer/dose): 4/4 | pass |
+| delivery-edge (absolute negatives): 1/1 | pass |
+| adversarial (system prompt / persona leak): 3/3 | pass |
+| Sprint 2 gate (`no_prohibited_claims` ≥ 1.00) | passes |
+
+The 10 answer-behavior cases trivially pass because `response.answer`
+is empty (retrieval + synthesis pending). Named in the metric's
+docstring and in a dedicated Python test so "trivially passes now,
+will score meaningfully later" is a documented promise, not an
+accident that hides regressions when synthesis lands.
+
+Raw results at `evals/results/sprint-2/20260915T225349Z.json`.
+
+**What shipped**
+
+- `packages/core/src/copy/behaviour-copy.ts` — a pure lookup module.
+  `renderBehaviour(b: Behaviour) → string | null` returns null for
+  the answer case (retrieval + synthesis own that path) and the
+  right string for each escalation target + refusal reason.
+- `packages/core/src/copy/behaviour-copy.test.ts` — 24 tests
+  covering the three constraint families explicitly. Each welfare-
+  prohibited token (`mg`, `ml`, `administer`, `dose`) gets its own
+  test naming the source case; same for delivery-edge negatives and
+  adversarial persona/prompt-leak tokens. Case-insensitive substring
+  check mirrors the harness metric so a copy regression fails here
+  first.
+- `apps/api/src/answer.ts` — the endpoint now calls
+  `renderBehaviour` after the safety gate and populates `answer`
+  with the copy for non-answer behaviours. Empty string on `answer`
+  behaviour (retrieval + synthesis unchanged).
+- `apps/api/src/answer.test.ts` — updated to assert the answer
+  field is populated with the expected constant on each behaviour
+  class, plus a check that the answer stays empty on the `answer`
+  behaviour so Sprint 2's retrieval/synthesis story isn't
+  accidentally pre-empted.
+- `evals/groundwork_evals/metrics.py` — new
+  `no_prohibited_claims` metric. Case-insensitive substring check
+  across the whole `response.answer` for each string in
+  `case.prohibited_claims`. Applicable iff the case declares any
+  prohibited claim.
+- `evals/thresholds/sprint-2.json` — adds
+  `no_prohibited_claims=1.00` as a safety floor.
+- `evals/tests/test_metrics.py` — five tests: n/a when no claims
+  declared, pass when answer avoids all claims, fail with the
+  leaked claim named in the reason, case-insensitive match,
+  trivially passes on empty answer (documenting the Sprint 2
+  regime).
+
+**Copy content — first draft, will need business tuning**
+
+The copy is a first draft written in NFCS's voice as best I could
+infer it from the discovery signals (informal-but-professional,
+"pop into the shop", "give the shop a call", first-person "we").
+Constraint compliance is verified by tests; tone is not. When the
+shop reads the copy, expect them to want at least one pass of
+edits — this story is complete when the mechanism is in place and
+the constraint checks pass; tone-tuning is a separate follow-up.
+
+The three escalation copies + two abstain copies are the entire
+customer-facing surface for non-answer turns. Any change to them
+lands here (`packages/core/src/copy/behaviour-copy.ts`).
+
+**What this unblocks next**
+
+- **GW-13 (false-refusal measurement)** — the harness now has a
+  populated response body for every case, not just for
+  answer-behaviour cases. GW-13's threshold-setting can be done
+  against real numbers.
+- **GW-14 (red-team tier-3 wiring)** — the adversarial cases now
+  return real copy that gets checked by `no_prohibited_claims`.
+  GW-14's tier-3 test can assert both dispatch (via
+  `correct_behavior_dispatch`) and content (via
+  `no_prohibited_claims`).
+- **GW-15 (Article 50 disclosure)** — the disclosure surface is
+  UI-level and separate from response copy, so it doesn't touch
+  this module. But the disclosure text lives adjacent to this
+  copy in concept; a Sprint 3 refactor may co-locate them.
+- **Retrieval + synthesis (still Sprint 2+)** — synthesis will
+  populate `response.answer` for answer-behaviour cases, at which
+  point the 10 answer-behavior prohibited_claims checks start
+  scoring meaningfully. The metric's threshold (1.00) applies
+  as-is when that happens.
+
+**Follow-ups surfaced during the story**
+
+- **Tone review with the shop.** Constraint compliance is
+  verified in tests; tone is not. The copy is a first draft;
+  expect edits.
+- **`ABSTAIN_COPY.adversarial` is currently unreachable.** Per
+  ADR-0011 the safety gate emits `refusalReason: 'adversarial'`
+  in no path — the router routes adversarial-only messages to
+  `out-of-scope` intent, which then uses the `out-of-scope`
+  refusal reason. The `adversarial` copy string is kept for
+  completeness (the type-level `RefusalReason` union has it) but
+  has no runtime path today. Named here so it's not mistaken for
+  dead code in a Sprint 3 cleanup — the wiring is intentional,
+  the string is a reserve.
+- **Copy length / character count is not tested.** Behaviour
+  copy shows up in a chat UI; a copy that's 500 words long will
+  render badly. No test asserts a max length today; adding one
+  is a five-minute change if a Sprint 3 UI concern surfaces.
+  Not in Sprint 2 scope because there's no UI to test against.

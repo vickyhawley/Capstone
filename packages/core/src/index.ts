@@ -10,6 +10,7 @@ export type {
   RefusalReason,
   SafetyGate,
 } from './ports/safety-gate.js';
+export { ABSTAIN_COPY, ESCALATION_COPY, renderBehaviour } from './copy/behaviour-copy.js';
 export type {
   LanguageModel,
   CompletionRequest,

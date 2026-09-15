@@ -1,4 +1,5 @@
 import { RulesSafetyGate, StubRouter } from '@groundwork/adapters';
+import { ABSTAIN_COPY, ESCALATION_COPY } from '@groundwork/core';
 import { describe, expect, it } from 'vitest';
 
 import { createAnswerRoute } from './answer.js';
@@ -34,7 +35,7 @@ describe('POST /api/answer', () => {
     expect(body['adversarial_pattern']).toBeNull();
   });
 
-  it('welfare-clinical intent → escalate to vet', async () => {
+  it('welfare-clinical intent → escalate to vet, answer holds vet copy', async () => {
     const app = createAnswerRoute({
       router: new StubRouter('welfare-clinical'),
       safetyGate,
@@ -44,9 +45,10 @@ describe('POST /api/answer', () => {
     expect(body['behavior']).toBe('escalate');
     expect(body['escalation_target']).toBe('vet');
     expect(body['refusal_reason']).toBeNull();
+    expect(body['answer']).toBe(ESCALATION_COPY.vet);
   });
 
-  it('out-of-scope intent → abstain with reason', async () => {
+  it('out-of-scope intent → abstain with reason, answer holds abstain copy', async () => {
     const app = createAnswerRoute({
       router: new StubRouter('out-of-scope'),
       safetyGate,
@@ -56,22 +58,33 @@ describe('POST /api/answer', () => {
     expect(body['behavior']).toBe('abstain');
     expect(body['refusal_reason']).toBe('out-of-scope');
     expect(body['escalation_target']).toBeNull();
+    expect(body['answer']).toBe(ABSTAIN_COPY['out-of-scope']);
   });
 
-  it('logistics + order-status phrasing → escalate to staff-order', async () => {
+  it('logistics + order-status phrasing → escalate to staff-order, answer holds staff-order copy', async () => {
     const app = createAnswerRoute({ router: new StubRouter('logistics'), safetyGate });
     const res = await post(app, { query: 'i ordered hay on monday any update' });
     const body = (await res.json()) as Record<string, unknown>;
     expect(body['behavior']).toBe('escalate');
     expect(body['escalation_target']).toBe('staff-order');
+    expect(body['answer']).toBe(ESCALATION_COPY['staff-order']);
   });
 
-  it('fit + boots phrasing → escalate to staff-service', async () => {
+  it('fit + boots phrasing → escalate to staff-service, answer holds staff-service copy', async () => {
     const app = createAnswerRoute({ router: new StubRouter('fit'), safetyGate });
     const res = await post(app, { query: 'which size boots do you recommend for UK 7' });
     const body = (await res.json()) as Record<string, unknown>;
     expect(body['behavior']).toBe('escalate');
     expect(body['escalation_target']).toBe('staff-service');
+    expect(body['answer']).toBe(ESCALATION_COPY['staff-service']);
+  });
+
+  it('answer-behavior leaves answer empty (retrieval/synthesis pending)', async () => {
+    const app = createAnswerRoute({ router: new StubRouter('product'), safetyGate });
+    const res = await post(app, { query: 'do you sell haynets' });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['behavior']).toBe('answer');
+    expect(body['answer']).toBe('');
   });
 
   it('adversarial-suspected + legitimate intent → still answers, signal preserved', async () => {

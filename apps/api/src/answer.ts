@@ -17,6 +17,7 @@
  */
 
 import { HybridRouter, RulesSafetyGate } from '@groundwork/adapters';
+import { renderBehaviour } from '@groundwork/core';
 import type { Behaviour, Router, SafetyGate } from '@groundwork/core';
 import { Hono } from 'hono';
 import OpenAI from 'openai';
@@ -74,8 +75,13 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
 
     const behaviour = deps.safetyGate.decide(decision, query);
 
+    // GW-12: non-answer behaviours render copy from the core module.
+    // Answer behaviours leave `answer` empty until retrieval +
+    // synthesis land — those are separate stories.
+    const behaviourCopy = renderBehaviour(behaviour);
+
     const response: AnswerResponseBody = {
-      answer: '',
+      answer: behaviourCopy ?? '',
       citations: [],
       retrieved_chunk_ids: [],
       refusal_reason: behaviour.kind === 'abstain' ? behaviour.refusalReason : null,

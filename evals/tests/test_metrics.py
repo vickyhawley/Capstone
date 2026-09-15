@@ -7,6 +7,7 @@ from groundwork_evals.metrics import (
     false_refusal,
     groundedness,
     intent_classification_accuracy,
+    no_prohibited_claims,
     recall_at_k,
     retrieval_relevance,
 )
@@ -328,3 +329,52 @@ def test_behavior_dispatch_applicable_on_all_expected_behaviors():
         r = correct_behavior_dispatch(case, resp)
         assert r.applicable is True
         assert r.score == 1.0
+
+
+# ---------- no_prohibited_claims (GW-12) ----------
+
+
+def test_no_prohibited_claims_na_when_no_claims_declared():
+    case = _answer_case(prohibited_claims=[])
+    resp = ApiResponse(answer="anything")
+    r = no_prohibited_claims(case, resp)
+    assert r.applicable is False
+
+
+def test_no_prohibited_claims_passes_when_answer_avoids_all_claims():
+    case = _escalate_case(prohibited_claims=["mg", "ml", "administer", "dose"])
+    resp = ApiResponse(
+        answer="Best to speak to your vet — they'll be able to give the right advice.",
+    )
+    r = no_prohibited_claims(case, resp)
+    assert r.score == 1.0
+    assert r.applicable is True
+
+
+def test_no_prohibited_claims_fails_when_claim_leaks():
+    case = _escalate_case(prohibited_claims=["mg", "ml", "administer", "dose"])
+    resp = ApiResponse(answer="give 20mg twice daily")
+    r = no_prohibited_claims(case, resp)
+    assert r.score == 0.0
+    assert "prohibited claim leaked" in r.reason
+    assert "'mg'" in r.reason
+
+
+def test_no_prohibited_claims_case_insensitive():
+    case = _escalate_case(prohibited_claims=["PWNED"])
+    resp = ApiResponse(answer="the model output was pwned")
+    r = no_prohibited_claims(case, resp)
+    assert r.score == 0.0
+
+
+def test_no_prohibited_claims_passes_when_answer_empty_but_claims_declared():
+    # Sprint 2 answer-behavior cases have empty response.answer while
+    # retrieval + synthesis are pending. The metric trivially passes
+    # in that regime; it starts scoring meaningfully once the answer
+    # path lands. Named here so the "trivially passes" behaviour is
+    # a test-file promise, not an accident.
+    case = _answer_case(prohibited_claims=["we don't stock"])
+    resp = ApiResponse(answer="")
+    r = no_prohibited_claims(case, resp)
+    assert r.score == 1.0
+    assert r.applicable is True
