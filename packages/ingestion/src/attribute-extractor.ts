@@ -11,9 +11,12 @@
  *    Dropped, never stored. Recorded in the drop-report so ingest can
  *    fail if the count is non-zero (see ADR-0004's "failure mode to
  *    watch, named explicitly").
- * 2. `sourceSpan !== null` must be a substring of the source at
- *    `[start, end)`. If the model reports a span that doesn't match
- *    the source, the attribute is dropped.
+ * 2. `sourceSpan.text` must appear as a substring of the source.
+ *    Offsets are computed server-side from `source.indexOf(text)`; the
+ *    model's reported offsets are ignored on purpose. See
+ *    `coerceSourceSpan` below for the reasoning (early run showed 296
+ *    of 303 drops were false positives from strict offset equality
+ *    despite the model quoting the right words).
  * 3. Keys not in the schema are silently dropped (the extractor was
  *    invented an attribute the schema does not know about; not
  *    stored to keep the metadata shape closed).
@@ -58,6 +61,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Verify by substring containment, not by offset equality. The model
+ * reliably quotes source text but does not reliably count characters —
+ * an early run showed 296 of 303 attributes dropping to
+ * `source-span-mismatch` despite the model quoting the right words.
+ * ADR-0004's grounding contract is "the value came from a substring of
+ * the description", not "the model correctly counted UTF-16 code units";
+ * the check now matches the contract. Offsets are computed server-side
+ * from the verified text so downstream consumers still get precise
+ * spans.
+ *
+ * The model's reported offsets are ignored on purpose. Requiring `text`
+ * to appear in `source` is stricter than requiring paraphrase-safe
+ * embedding: text must match verbatim, whitespace and casing included.
+ * Paraphrase (e.g. "20,000 mm" when source says "20000mm") still fails
+ * the check as it should.
+ */
 function coerceSourceSpan(raw: unknown, source: string): SourceSpan | null {
   if (raw === null || raw === undefined) {
     return null;
@@ -66,18 +86,14 @@ function coerceSourceSpan(raw: unknown, source: string): SourceSpan | null {
     return null;
   }
   const text = raw['text'];
-  const start = raw['start'];
-  const end = raw['end'];
-  if (typeof text !== 'string' || typeof start !== 'number' || typeof end !== 'number') {
+  if (typeof text !== 'string' || text.length === 0) {
     return null;
   }
-  if (start < 0 || end > source.length || start >= end) {
+  const foundStart = source.indexOf(text);
+  if (foundStart < 0) {
     return null;
   }
-  if (source.slice(start, end) !== text) {
-    return null;
-  }
-  return { text, start, end };
+  return { text, start: foundStart, end: foundStart + text.length };
 }
 
 function coerceValue(raw: unknown, attributeType: string): string | number | boolean | null {

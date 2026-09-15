@@ -69,14 +69,46 @@ describe('parseExtractionResponse', () => {
     });
   });
 
-  it('drops a source span whose text does not match the source at [start, end)', () => {
+  it('accepts a source span whose text is in source even if reported offsets are wrong', () => {
+    // The model quoted the right text but got the offsets wrong. This
+    // is the common LLM failure mode (models quote well, count poorly).
+    // The verifier ignores reported offsets and computes them
+    // server-side from source.indexOf(text).
     const raw = JSON.stringify({
       attributes: [
         {
           key: 'waterproof_mm',
           value: 20000,
           confidence: 0.9,
-          source_span: { text: '20000mm', start: 0, end: 7 },
+          source_span: { text: '20000mm', start: 0, end: 7 }, // wrong offsets
+        },
+      ],
+    });
+    const result = parseExtractionResponse(raw, outerwearSchema, source);
+    expect(result.drops).toHaveLength(0);
+    const [attr] = result.attributes;
+    expect(attr).toBeDefined();
+    expect(attr?.value).toBe(20000);
+    // Offsets were recomputed from indexOf, not taken from the model.
+    const expectedStart = source.indexOf('20000mm');
+    expect(attr?.sourceSpan).toEqual({
+      text: '20000mm',
+      start: expectedStart,
+      end: expectedStart + '20000mm'.length,
+    });
+  });
+
+  it('drops a source span whose text is not present in the source', () => {
+    // The model returned a value with a quote that isn't actually in the
+    // source text. This is the real hallucination case the substring
+    // check catches — the model invented a quote.
+    const raw = JSON.stringify({
+      attributes: [
+        {
+          key: 'waterproof_mm',
+          value: 15000,
+          confidence: 0.9,
+          source_span: { text: '15000mm', start: 0, end: 7 },
         },
       ],
     });
