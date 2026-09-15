@@ -23,6 +23,10 @@ coverage/
 supabase/.branches/
 supabase/.temp/
 
+# Ingestion runner output (regenerable; snapshot tests are the source of
+# truth for chunk shape, see packages/ingestion/src/*.test.ts).
+data/chunks/
+
 # Python (eval harness)
 .venv/
 __pycache__/

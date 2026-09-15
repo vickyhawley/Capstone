@@ -22,3 +22,20 @@ export type {
   StockLevel,
 } from './ports/catalogue-repository.js';
 export type { Reranker, RerankableCandidate, RerankedCandidate } from './ports/reranker.js';
+
+export {
+  beddingSchema,
+  feedSchema,
+  getAttributeSchema,
+  haylageSchema,
+  listAttributeSchemas,
+  outerwearSchema,
+  supplementsSchema,
+} from './attribute-schemas/index.js';
+export type {
+  AttributeDefinition,
+  AttributeSchema,
+  AttributeType,
+  ExtractedAttribute,
+  SourceSpan,
+} from './attribute-schemas/index.js';
