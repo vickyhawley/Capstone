@@ -18,7 +18,8 @@
     "dev:web": "pnpm --filter @groundwork/web dev",
     "dev:api": "pnpm --filter @groundwork/api dev",
     "ingest": "pnpm --filter @groundwork/ingestion ingest",
-    "coverage": "pnpm --filter @groundwork/ingestion coverage"
+    "coverage": "pnpm --filter @groundwork/ingestion coverage",
+    "retrieve": "pnpm --filter @groundwork/retrieval-experiment retrieve"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",

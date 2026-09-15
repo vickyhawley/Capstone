@@ -85,6 +85,12 @@ importers:
       '@groundwork/core':
         specifier: workspace:*
         version: link:../core
+      '@supabase/supabase-js':
+        specifier: ^2.116.0
+        version: 2.116.0
+      openai:
+        specifier: ^7.15.0
+        version: 7.15.0(ws@8.21.3)
     devDependencies:
       typescript:
         specifier: 5.7.2
@@ -104,6 +110,34 @@ importers:
 
   packages/ingestion:
     dependencies:
+      '@groundwork/core':
+        specifier: workspace:*
+        version: link:../core
+      '@supabase/supabase-js':
+        specifier: ^2.116.0
+        version: 2.116.0
+      openai:
+        specifier: ^7.15.0
+        version: 7.15.0(ws@8.21.3)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.20.2
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.13
+      typescript:
+        specifier: 5.7.2
+        version: 5.7.2
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.20.2)(jsdom@25.0.1)
+
+  packages/retrieval-experiment:
+    dependencies:
+      '@groundwork/adapters':
+        specifier: workspace:*
+        version: link:../adapters
       '@groundwork/core':
         specifier: workspace:*
         version: link:../core

@@ -1,4 +1,16 @@
 export { StubRetriever } from './retriever/stub-retriever.js';
+export { PgTsRankRetriever } from './retriever/pg-ts-rank-retriever.js';
+export {
+  PgvectorDenseRetriever,
+  EMBEDDING_DIM,
+  EMBEDDING_MODEL,
+} from './retriever/pgvector-dense-retriever.js';
+export {
+  HybridRetriever,
+  type HybridRetrieverOptions,
+} from './retriever/hybrid-retriever.js';
+export { rrf, weightedFusion, type FusionInput, type FusionStrategy } from './retriever/fusion.js';
+
 export { StubLanguageModel } from './language-model/stub-language-model.js';
 export { StubToolRegistry } from './tool-registry/stub-tool-registry.js';
 export { StubTraceSink } from './trace-sink/stub-trace-sink.js';

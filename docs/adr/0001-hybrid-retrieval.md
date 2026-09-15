@@ -357,3 +357,179 @@ that costs ~$0.20 at current scale.
 - ADR-0009: synonym dictionary / equine-domain lexeme mapping for
   `to_tsvector`.
 - Addendum to this ADR: Sprint 1 fusion + rerank experiment outcome.
+
+---
+
+## Addendum — Sprint 1 baseline outcome (2026-09-15)
+
+Ran the four-configuration retrieval baseline (`pnpm retrieve`) against
+the 40-case Sprint 1 golden dataset. Numbers are cited from
+`evals/results/sprint-1/retrieval-baseline.md`; the CLI is
+reproducible via `pnpm retrieve`. All four configurations use the
+noop reranker as the control — no reranker treatment was implemented
+this sprint, so the "does the reranker earn its place" question is
+formally deferred to Sprint 2 with a defensible answer under the
+stopping rule below.
+
+### Headline
+
+| config | recall@5 | recall@10 | relevance | p50 ms | p95 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| dense | **83.3%** | **94.4%** | 15.0% | 228 | 340 |
+| sparse | 5.6% | 5.6% | 5.6% | 57 | 207 |
+| hybrid-rrf | 83.3% | 94.4% | 15.0% | 229 | 266 |
+| hybrid-weighted | 83.3% | 94.4% | 15.0% | 251 | 290 |
+
+Scored over 18 answer cases with populated source IDs. The 8
+legitimately-empty answer cases (three-state negatives, brand-not-
+stocked, fit gap) and 14 escalate/abstain cases are held out — per
+`evals/datasets/README.md` §1 they score on `groundedness` and
+`false_refusal` only.
+
+### Stopping-rule application
+
+The ADR's stopping rule reads: *"Fusion: pick the fusion method with
+the higher recall@10 on the golden set, provided the gap is ≥3
+absolute points; otherwise default to RRF (fewer parameters, one less
+thing to tune). Reranker: ship a reranker iff it improves recall@10
+by ≥5 absolute points AND improves groundedness by ≥3 absolute points
+AND costs less than 300 ms p95 additional latency."*
+
+Applied honestly:
+
+- **Fusion.** RRF and weighted both land at 94.4% recall@10 — gap is
+  zero absolute points. Under the default rule, RRF wins by tie-break
+  ("fewer parameters, one less thing to tune").
+- **Whether to run hybrid at all.** Dense-only also lands at 94.4%
+  recall@10. Hybrid adds 4–30 ms latency for no recall improvement,
+  because the sparse component contributes nothing (see the ts_query
+  finding below). **Ship dense-only for Sprint 1**, with the fusion
+  code kept behind the port for the Sprint 2 rematch after sparse is
+  fixed. This is not a rejection of the hybrid design ADR-0001
+  argued for — it's a Sprint 1 measurement that hybrid earns its
+  keep once both indexes are actually contributing signal.
+- **Reranker.** No treatment implemented; noop ships. This is the
+  ADR's explicit fallback: *"If only one metric clears, ship the
+  noop and re-open in Sprint 2."* Zero metrics cleared because zero
+  metrics were measured. Sprint 2 spike opens the reranker
+  comparison with Cohere Rerank v3 and bge-reranker-base against
+  the dense-only baseline.
+
+### Two implementation findings that surfaced during the run
+
+**1. `chunks.embedding` was NULL on every row.** Migration 001
+declared `vector(1536)` and an HNSW index, but the GW-01 ingest
+pipeline (`packages/ingestion/src/ingest-cli.ts`) never called the
+embedder — attribute extraction was wired to OpenAI, embeddings were
+not. The first experiment run reported dense at 0.0% for exactly
+that reason: nothing to search. A one-off backfill script
+(`packages/retrieval-experiment/src/backfill-embeddings.ts`,
+`pnpm --filter @groundwork/retrieval-experiment backfill-embeddings`)
+populates all 417 chunks in ~30 s at ~$0.002 total cost. Sprint 2
+should fold embedding generation into the ingest pipeline so this
+gap doesn't recur on the next corpus refresh; ADR-0004's second
+addendum names the ingest-runner cleanup work that includes this.
+
+**2. `plainto_tsquery` uses AND semantics.** The sparse retriever
+tokenises the customer query and requires *every* content word to
+appear in the chunk. *"How much is your shavings pls"* becomes
+`much & shaving & pls` — no chunk has all three, so the query
+returns empty and the sparse retriever contributes zero to the
+fusion. Case 007 (*"cost per bale of purple horsehage"*) hits the
+same wall: nothing in the corpus contains `purple`, so the
+retriever filters out every HorseHage chunk. This is why sparse
+lands at 5.6% (1 of 18) — the one hit was a logistics case whose
+query happened to have overlapping content words with the delivery
+guide. Sprint 2 candidates: switch to `websearch_to_tsquery` (which
+uses OR-with-boost by default), or add an OR-fallback in the RPC.
+This is a specific pattern named in ADR-0009's synonym-dictionary
+slot — the lexeme fix and the query-semantics fix are the same
+Sprint 2 work item.
+
+### One case worth calling out
+
+**Case 007 (`product-007-purple-horsehage-price`), trade-synonym.**
+The `trade-synonym` tag was introduced when this case exposed a
+retrieval gap: customer says "purple", catalogue says "Timothy",
+and no chunk contains "purple". Dense retrieval **hits the right
+chunk (HorseHage Timothy) in top-10 but misses top-5**. Sparse
+misses completely. This is the first concrete measurement showing
+what ADR-0009's synonym-dictionary work would buy — dense
+embeddings partially bridge the trade-shorthand gap via context
+(HorseHage colour bales are described in adjacent product listings)
+but not confidently enough to promote the right chunk into the
+top-5. Adding the synonym mapping should lift both dense and
+sparse on this class of case.
+
+### Per-provenance / per-intent honest read
+
+- **Real-customer cases (17 scored)** — dense at 94.1% recall@10.
+  This is what the metric is designed to say: on the traffic the
+  shop actually sees, the retriever finds the right chunk almost
+  every time.
+- **Boundary probe (1 scored — fit-029, jodhpurs)** — 100% dense.
+  Not enough sample to draw a conclusion; the single case succeeded.
+- **Adversarial (0 scored)** — no adversarial cases have populated
+  source IDs; they're OOS/abstain cases where retrieval isn't the
+  scoring axis. Nothing to report.
+
+Per-intent breakdown for dense:
+
+| intent | scored | recall@5 | recall@10 |
+| --- | ---: | ---: | ---: |
+| product | 7 | 85.7% | 100.0% |
+| fit | 1 | 100.0% | 100.0% |
+| logistics | 10 | 80.0% | 90.0% |
+
+The one dense logistics miss at top-10 (out of 10 cases scored) is
+worth naming honestly rather than hiding in an aggregate: dense
+retrieval isn't perfect on delivery-policy questions, likely
+because the query and the guide share only the *topic* rather than
+overlapping lexemes ("how much is delivery" vs a guide that says
+"free with no minimum"). Sprint 2 candidates the retrieval side
+can address without new guides: chunk-level metadata weighting
+(prefer content-type=guide when the query is policy-shaped),
+or query rewriting.
+
+### Anything that succeeded by luck
+
+**One item worth flagging.** Case 007 (trade-synonym) hit dense
+top-10 but not top-5. That partial success is *design-relevant*
+(embeddings do carry some cross-lingual context) but on the
+knife-edge: the miss is at rank 6, which is the kind of borderline
+result that could flip case-by-case with a corpus refresh. The
+addendum records this so a Sprint 2 measurement over the same case
+after ADR-0009 lands can quantify the improvement.
+
+Nothing else in the top-line result reads as luck — the 94.4%
+recall@10 on real cases is genuinely broad across product,
+logistics, and the single fit case that has a chunk.
+
+### What lands from this run
+
+- **Ship dense-only for Sprint 1**, RRF fusion code kept behind the
+  port for the Sprint 2 rematch.
+- **Reranker deferred to Sprint 2** with the noop as the control,
+  ADR stopping rule applied as written.
+- **Sprint 2 sequence** (added to Sprint log follow-ups):
+  1. Fold embedding generation into `pnpm ingest` so a fresh corpus
+     doesn't ship without embeddings.
+  2. Switch sparse to `websearch_to_tsquery` (or OR-fallback in the
+     RPC) so ts_rank has a chance to contribute signal.
+  3. Re-run this baseline against the fixed sparse retriever;
+     hybrid vs dense-only decision is revisited then.
+  4. Reranker spike: dense-only vs dense+Cohere Rerank v3 vs
+     dense+bge-reranker-base.
+  5. ADR-0009 (synonym dictionary) — measure case 007's top-5 hit
+     rate before and after.
+- **Guide gaps recorded but NOT closed this sprint** per the Job-3
+  brief. Cases 026, 027, 030 remain at `[]` awaiting the
+  saddle-fitting and girth-fitting guides listed in ADR-0003's
+  second addendum.
+
+The Sprint 1 baseline is defensible: on the traffic that exists, on
+the corpus that exists, dense retrieval finds the right chunk in the
+top-10 for 17 of 18 scored answer cases. That's not the ceiling —
+Sprint 2 has an actionable list of things that could each lift the
+number — but it's a real number the design document can carry into
+the next iteration.
