@@ -135,6 +135,30 @@ If a case has multiple valid answering chunks (e.g. the same product
 described in two overlapping documents), list all of them. The
 `recall_at_k` metric treats them as equally correct.
 
+**When `[]` is legitimate on an answer case.** Not every answer case
+has a positive chunk to cite. Three shapes recur:
+
+- **Three-state negative** — *"do you stock wormers?"* when the shop
+  neither holds them nor can source them. The honest answer is a
+  plain no; no chunk in the corpus says *"we don't sell wormers"*.
+- **Brand-not-stocked** — *"do you stock Ariat?"* when the brand
+  isn't in the catalogue. Same shape: correct answer is "no", no
+  positive source exists.
+- **Absent variant** — the catalogue holds the product family but
+  not the queried variant (e.g. the customer names a colour or
+  size not stocked).
+
+In each shape, `required_source_ids: []` is correct on an
+`answer` case. `recall_at_k` does not apply to these cases; they
+score on `groundedness` and `false_refusal` only. The `answer` is
+"the corpus does not support a positive claim, therefore no", and
+the assistant scores well by *not* fabricating a source.
+
+This is a fragile way to be right — the correct answer depends on
+retrieval failing rather than succeeding. Sprint 2 should consider
+a "what we don't stock" guide that turns the negative into a
+positive chunk the retriever can cite; see the ADR-0003 addendum.
+
 ### `prohibited_claims` — list of strings, optional (default `[]`)
 
 Tokens that must **not** appear in the assistant's answer for the case
@@ -805,6 +829,48 @@ tell you when your delivery is scheduled"*. Prefer relying on
 `correct_abstention` (the escalate metric) over brittle
 substring rules.
 
+### `trade-synonym`
+
+**Definition.** Questions where the customer uses trade shorthand
+(colour codes, industry nicknames, historical brand names) that
+doesn't appear verbatim in the product listing. Answering
+correctly requires a synonym mapping between the customer's
+terminology and the catalogue's.
+
+**Motivating example.** Case 007 asks about *"purple horsehage"*.
+HorseHage brand sells haylage in colour-coded bales — Blue is
+high fibre, Green is ryegrass, Purple is Timothy — but nothing
+in the HorseHage Timothy product listing contains the word
+"purple". A pure semantic match on the query will miss the
+correct product; a lexical match will miss it too. The
+retrieval succeeds only if the system knows the synonym.
+
+**Discriminating test.** Does answering require mapping a
+customer-facing term (colour code, trade nickname, historical
+name) to a chunk-facing term that is different? If yes, tag as
+trade-synonym.
+
+**Applies to intents.** `product` (most common — brand and
+variant shorthand), occasionally `fit` (industry-standard
+sizing shorthand not in the product text).
+
+**Expected behaviour.** `answer`. The `required_source_ids`
+point at the *canonical-name* chunk (e.g. HorseHage Timothy for
+case 007), not at whatever the customer's shorthand semantically
+matches. If the retriever fails to return the canonical chunk,
+that IS the retrieval failure this tag exists to measure.
+
+**Prohibited claims.** Case-dependent. If the customer's
+shorthand has a specific mis-mapping the system commonly makes,
+prohibit it; otherwise leave empty.
+
+**Relationship to ADR-0001's synonym-dictionary follow-up.**
+ADR-0001's follow-up list has reserved a slot for equine-domain
+synonym / lexeme mapping for `to_tsvector` (currently ADR-0009).
+Case 007 is the first concrete case that motivates why that
+work matters. When ADR-0009 lands, `trade-synonym` cases are
+the direct test bed.
+
 ---
 
 ## 4. Provenance
@@ -983,6 +1049,65 @@ instrument — writing real cases catches assumptions the sampling
 statistics don't. Cases 26–40 are constructed against the
 revised grid (see §6.4 below) with the trade recorded honestly:
 richer real coverage, fewer boundary probes.
+
+### Batch-3 finding (2026-09-15) — corpus staleness is a recurring pattern, not a quirk
+
+Populating `required_source_ids` surfaced a third independent
+instance of the `superseded-source` pattern (§3) in the same
+four-month sample:
+
+1. **Delivery policy.** Pre-opening staff quoted "free for the
+   first three months, then a small charge on orders under
+   £200". Currently free with no minimum.
+2. **Bank-holiday opening.** Pre-opening staff said the shop
+   was closed on bank holidays. Currently always open.
+3. **Thunderbrook Healthy Herbal Muesli.** August DM said "not
+   stocked but we can order it in, arriving Monday, £31.50".
+   Now in the catalogue as a held product with a chunk. Case
+   021 (originally tagged `three-state-stock`) has been
+   retagged `superseded-source` to reflect what the corpus
+   actually contains today.
+
+Three independent occurrences in four months of DM traffic is a
+finding about retail knowledge bases in general, not a quirk of
+this dataset. Shop content that a retriever indexes ages faster
+than the retriever's index does — policies change at open,
+product ranges expand as suppliers land, one-off substitutions
+made in DMs become policy without anyone re-checking the answer
+file. `superseded-source` is not a rare tag; it's a routine tag
+this corpus will grow more instances of every month.
+
+Implication for the eval harness: metrics need to be honest about
+which cases are testing the retriever's freshness vs its
+correctness. A ~7.5% floor of superseded-source cases (3 of 40)
+in Sprint 1's dataset is a useful measurement of that dimension.
+
+### Batch-3 finding (2026-09-15) — the guide gap ADR-0003 predicted is real
+
+Fifteen of forty cases have no candidate chunk to point at, either
+because:
+
+- **The catalogue doesn't hold the item** (three-state negatives:
+  wormers, electric fencing; brand-not-stocked: Ariat; orderable
+  positives: Molichaff, CSJ; absent variant: pig nuts) —
+  legitimate `[]` per the §1 addition.
+- **The catalogue has products of the type but no fit-context
+  chunks** (saddle fitting cases 026 and 030; girth fitting case
+  027).
+
+The second bucket is exactly what ADR-0003's premise predicted:
+product listings can't answer fit questions because the facts
+aren't in them. Two Sprint 2 guides would close the gap for the
+fit intent — saddle fitting and girth fitting. See ADR-0003's
+addendum for the full follow-up.
+
+The first bucket exposes a more subtle finding: **a corpus has
+no positive representation of absence**. Nothing in the chunks
+says "we don't sell wormers"; the assistant answers correctly
+only by failing to retrieve a positive match, which is a fragile
+way to be right. Sprint 2 should consider a "what we don't
+stock" guide — canonical negative claims that give the retriever
+something to cite when the honest answer is no.
 
 ---
 

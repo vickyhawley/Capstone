@@ -288,3 +288,98 @@ and the prose guides carry the facts that aren't (feeding rates,
 fit rules, waterproof ratings).
 
 Full per-attribute breakdown lives in ADR-0004's addendum.
+
+---
+
+## Second addendum — findings from golden-case source-ID authoring (2026-09-15)
+
+Populating `required_source_ids` on the 40-case Sprint 1 golden
+dataset surfaced three findings that were latent in this ADR's
+argument but only became concrete when real cases had to be
+grounded against real chunks.
+
+### The guide gap is measurable and specific
+
+Fifteen of the 40 golden cases have no corpus chunk to point at.
+That number splits cleanly:
+
+- **Nine cases where the catalogue legitimately doesn't have the
+  answer** (three-state negatives, brand-not-stocked, orderable
+  positives, absent variants). `[]` is honest; the corpus has
+  nothing to say and the assistant scores by not fabricating.
+  See §1 of `evals/datasets/README.md` for the case-schema
+  addition covering this shape.
+- **Three fit cases that the catalogue can't answer at all**
+  (saddle fitting for a wide-backed cob, saddle fitting probed
+  by a prompt injection, girth-line fitting for a dressage
+  horse). Product listings for saddles and girths carry
+  dimensions and prices, not the fit rules a customer would
+  need to hear.
+
+The fit gap is exactly the coverage ceiling this ADR named. Now
+it has cases attached — three of the four fit boundary probes in
+the dataset can't be sourced without new guide content.
+
+### Sprint 2 candidates — guides to close the fit gap
+
+Two guides would close the fit-question gap and give
+`required_source_ids` real chunks to point at:
+
+- **`data/guides/saddle-fitting.md`** — general saddle-fitting
+  principles (tree width, gullet clearance, panel style),
+  when to route to a professional fitter, what a customer can
+  and can't judge visually. Covers cases 026 and 030.
+- **`data/guides/girth-fitting.md`** — girth-line depth, girth
+  length across saddle sizes, girth types (dressage, GP,
+  short, long). Covers case 027.
+
+Neither guide exists today; both are Sprint 2 candidates. Landing
+them means re-running `required_source_ids` on the affected cases
+and shifting them from `[]` to real chunk IDs.
+
+### The negative-source finding — corpus has no positive representation of absence
+
+The nine legitimately-empty cases expose a subtler pattern this
+ADR didn't anticipate. When the honest answer is "no, we don't
+stock wormers", nothing in the corpus supports that claim
+directly. The assistant answers correctly by *failing* to
+retrieve a positive match. That's a fragile shape:
+
+- If the retriever happens to surface a superficially-relevant
+  chunk (a bedding product that mentions "wormers" as a
+  contraindication, a supplement whose description says "no
+  known interactions with wormers"), the assistant may treat
+  the presence of the word as license to answer positively.
+- The evaluation harness can't distinguish "the assistant
+  correctly refused because no positive chunk was returned"
+  from "the assistant refused because retrieval failed for
+  unrelated reasons".
+
+A **"what we don't stock" guide** would turn each canonical
+negative into a positive chunk the retriever can cite. Sprint 2
+candidate. Structure: a policy-shaped guide listing categories
+the shop does not carry and does not source (wormers, electric
+fencing, prescription medications, tack repair services), with
+one paragraph per category naming the correct routing
+("wormers: nearest local vet is X"). The retriever hits
+positive text; the assistant grounds the "no" instead of
+guessing it.
+
+### Follow-up story shape
+
+All three sprint-2 guide-authoring items share the same shape:
+
+1. SME (or shop owner) drafts the guide content.
+2. Guide lands under `data/guides/*.md`.
+3. `pnpm ingest` refreshes the corpus.
+4. `evals/scripts/find_chunks.py` surfaces the new chunk IDs.
+5. Affected golden cases have their `required_source_ids`
+   populated from `[]` to real chunks.
+6. Metrics that were previously N/A on those cases (recall_at_k,
+   retrieval_relevance) begin scoring.
+
+That fifth step is exactly why the case-schema addition in
+`evals/datasets/README.md` §1 (legitimacy of `[]` on answer
+cases) is important: without it, populating a `[]` later would
+look like "fixing the case" rather than "the corpus grew to
+support what the case was already correctly claiming".
