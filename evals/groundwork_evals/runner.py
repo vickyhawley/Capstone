@@ -26,7 +26,42 @@ from typing import Any
 from .client import ApiClient, ApiError
 from .metrics import METRICS, MetricResult, aggregate
 from .schema import ApiResponse, DatasetError, EvalCase, load_dataset
-from .thresholds import Breach, find_breaches, load_thresholds
+from .thresholds import KNOWN_PROVENANCES, Breach, ThresholdConfig, find_breaches, load_thresholds
+
+
+def normalize_provenance(raw: str) -> str:
+    """Reduce a free-text provenance string to a known class name.
+
+    Per the dataset spec (`evals/datasets/README.md`), each case's
+    `provenance` is free text prefixed with one of the three allowed
+    class names — but the actual JSONL uses variants like
+    `real-customer-enquiry — NFCS social DM export...`. This function
+    matches on the longest known prefix that's a whole-word match, so
+    `real-customer-enquiry` maps to `real-customer` and
+    `constructed-adversarial — prompt injection...` maps to
+    `constructed-adversarial`.
+
+    Raises ValueError if no known prefix matches — a data-quality
+    failure the operator should see, not silently bucket into
+    'unknown'.
+    """
+    # Sort longest-first so `constructed-adversarial` matches before
+    # a hypothetical `constructed` prefix would.
+    for known in sorted(KNOWN_PROVENANCES, key=len, reverse=True):
+        if raw.startswith(known):
+            # Ensure it's a whole-word match (either end of string or
+            # followed by a non-alphanumeric char) so a hypothetical
+            # `real-customer-something-unrelated` doesn't map here by
+            # accident.
+            rest = raw[len(known) :]
+            if not rest or not (rest[0].isalnum() or rest[0] == "-"):
+                return known
+            # A trailing hyphen is part of some existing values (e.g.
+            # `real-customer-enquiry`). Treat those as belonging to
+            # the root class.
+            if rest[0] == "-":
+                return known
+    raise ValueError(f"provenance '{raw}' does not start with a known class")
 
 
 @dataclass
@@ -111,7 +146,7 @@ def run(args: argparse.Namespace) -> int:
         per_case_results.append(outcome_container)
 
     aggregates = aggregate(per_metric_lists)
-    breaches: list[Breach] = find_breaches(aggregates, thresholds)
+    breaches: list[Breach] = find_breaches(aggregates, thresholds.overall)
 
     # Per-intent breakdowns. ADR-0010 (router) and ADR-0011 (safety
     # gate) both argue the aggregate hides class-specific problems —
@@ -126,6 +161,16 @@ def run(args: argparse.Namespace) -> int:
         ),
     }
 
+    # Per-provenance aggregates + per-slice threshold checks (GW-14).
+    # This is what makes the "tier 3 = red-team set" README claim
+    # enforceable — the constructed-adversarial slice can be gated at
+    # stricter floors than the overall aggregate without a separate
+    # runner invocation.
+    per_provenance_aggregates = _per_provenance_aggregates(cases, per_metric_lists)
+    for provenance, aggs in per_provenance_aggregates.items():
+        slice_thresholds = thresholds.by_provenance.get(provenance, {})
+        breaches.extend(find_breaches(aggs, slice_thresholds, provenance=provenance))
+
     write_results(
         args.results_dir,
         args.sprint,
@@ -137,18 +182,47 @@ def run(args: argparse.Namespace) -> int:
         breaches,
         per_case_results,
         per_intent_breakdowns,
+        per_provenance_aggregates,
     )
 
     if breaches:
         print("Threshold breaches:", file=sys.stderr)
         for b in breaches:
             direction = ">=" if b.higher_is_better else "<="
+            slice_label = f" [{b.provenance}]" if b.provenance else ""
             print(
-                f"  - {b.metric}: score={b.score:.3f}, must be {direction} {b.threshold:.3f}",
+                f"  - {b.metric}{slice_label}: score={b.score:.3f}, "
+                f"must be {direction} {b.threshold:.3f}",
                 file=sys.stderr,
             )
         return 1
     return 0
+
+
+def _per_provenance_aggregates(
+    cases: list[EvalCase],
+    per_metric_lists: dict[str, list[MetricResult]],
+) -> dict[str, dict[str, Any]]:
+    """Split each metric's per-case results by provenance, aggregate each.
+
+    Returns `{provenance: {metric: Aggregate}}`. Empty slices are
+    omitted — if the dataset has no `constructed-adversarial` cases,
+    that key doesn't appear.
+    """
+    # Bucket case indices by normalised provenance.
+    indices_by_provenance: dict[str, list[int]] = {}
+    for i, case in enumerate(cases):
+        prov = normalize_provenance(case.provenance)
+        indices_by_provenance.setdefault(prov, []).append(i)
+
+    out: dict[str, dict[str, Any]] = {}
+    for provenance, indices in indices_by_provenance.items():
+        sliced: dict[str, list[MetricResult]] = {
+            metric: [per_metric_lists[metric][i] for i in indices]
+            for metric in per_metric_lists
+        }
+        out[provenance] = aggregate(sliced)
+    return out
 
 
 def _per_intent_metric(
@@ -191,10 +265,11 @@ def write_results(
     dataset_path: str,
     thresholds_path: str,
     aggregates: dict[str, Any],
-    thresholds: dict[str, float],
+    thresholds: ThresholdConfig,
     breaches: list[Breach],
     cases: list[CaseOutcome],
     per_intent_breakdowns: dict[str, dict[str, dict[str, Any]]] | None = None,
+    per_provenance_aggregates: dict[str, dict[str, Any]] | None = None,
 ) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     sprint_dir = results_dir / f"sprint-{sprint}"
@@ -217,7 +292,10 @@ def write_results(
             }
             for name, agg in aggregates.items()
         },
-        "thresholds": thresholds,
+        "thresholds": {
+            "overall": thresholds.overall,
+            "by_provenance": thresholds.by_provenance,
+        },
         "breaches": [asdict(b) for b in breaches],
         "cases": [asdict(c) for c in cases],
     }
@@ -226,6 +304,19 @@ def write_results(
         # breakdowns for multiple metrics side-by-side without shape
         # collisions.
         payload["per_intent_breakdowns"] = per_intent_breakdowns
+    if per_provenance_aggregates:
+        payload["per_provenance"] = {
+            provenance: {
+                metric: {
+                    "score": agg.score,
+                    "n_applicable": agg.n_applicable,
+                    "n_total": agg.n_total,
+                    "higher_is_better": agg.higher_is_better,
+                }
+                for metric, agg in aggs.items()
+            }
+            for provenance, aggs in per_provenance_aggregates.items()
+        }
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, sort_keys=False)
     return out_path
