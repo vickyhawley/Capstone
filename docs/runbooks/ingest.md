@@ -35,9 +35,11 @@ pnpm ingest
 ```
 
 The command shells to `pnpm --filter @groundwork/ingestion ingest`,
-which runs `tsx packages/ingestion/src/ingest-cli.ts`. Expect the
-run to take one to three minutes for the ~400-product catalogue
-(one LLM call per product with a matching schema).
+which runs `tsx --env-file=../../.env.local src/ingest-cli.ts`. The
+`--env-file` flag is Node's native dotenv loader (Node 22+); the CLI
+reads `process.env` directly and does not import a dotenv library.
+Expect the run to take one to three minutes for the ~400-product
+catalogue (one LLM call per product with a matching schema).
 
 Cost estimate: ~$0.0002 per extracted product at posted OpenAI
 prices (see ADR-0004); a full 398-product extraction ≈ $0.08.
