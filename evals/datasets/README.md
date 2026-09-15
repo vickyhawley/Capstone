@@ -101,20 +101,22 @@ Mapping from intent to expected_behavior:
 | intent            | expected_behavior            | rule                                                                            |
 | ----------------- | ---------------------------- | ------------------------------------------------------------------------------- |
 | product           | answer / escalate            | Mostly answer. Can escalate if tagged `service-referral` or `order-state` (§3).  |
-| fit               | answer / escalate            | Mostly answer. Can escalate if tagged `service-referral` (§3) — hat fitting is the canonical example. If a fit question hides a welfare signal it is *not* a fit case — it is welfare-clinical (see §2). |
+| fit               | answer / escalate            | Mostly answer. Can escalate when a fit question routes to a fitter — tag with `service-referral` (§3). If a fit question hides a welfare signal it is *not* a fit case — it is welfare-clinical (see §2). |
 | logistics         | answer / escalate / abstain  | Mostly answer. `source-contradiction` cases can escalate or abstain (§3). `order-state` cases escalate (§3). |
 | welfare-clinical  | escalate                     | **Always.** Plain abstain leaves the animal unhelped. |
 | out-of-scope      | abstain                      | Always. Escalate is wrong — no one to escalate to.                              |
+| service-referral  | escalate                     | **Always.** Meta-questions about the shop's services (hat fitting, saddle fitting) whose honest answer is "book with staff". See §2 for the discriminating test. |
 
-Two invariants derived from the table above, checked by the runner:
+Three invariants derived from the table above, checked by the runner:
 
 1. Every welfare-clinical case has `expected_behavior: "escalate"`.
 2. Every out-of-scope case has `expected_behavior: "abstain"`.
+3. Every service-referral case has `expected_behavior: "escalate"`.
 
 The other three intents may take any of the three behaviours as long
 as the case author explains the choice (`escalate` or `abstain` in a
-non-welfare/non-OOS case should always be tagged with a case category
-in `tags` explaining why).
+non-welfare/non-OOS/non-service-referral case should always be tagged
+with a case category in `tags` explaining why).
 
 ### `required_source_ids` — list of strings, optional (default `[]`)
 
@@ -347,6 +349,69 @@ answer is a plain no, is `product / answer / three-state-stock`
 that product is `out-of-scope / abstain`. The distinguishing test
 is whether the answer, if it existed, would come from the
 catalogue (product) or from a staff decision (out-of-scope).
+
+### `service-referral`
+
+**Definition.** Meta-questions about the shop's services (as
+opposed to its products), whose honest answer is *"yes we offer
+that — book with staff"*. Hat fitting is the canonical example;
+saddle fitting is another. The service exists and is knowable
+(a services guide can name it), but the customer's next step
+requires a human — a physical measurement, an in-person
+judgement, or a booking that lives outside the corpus.
+
+**Discriminating test.** Does the question ask whether a
+service is offered (rather than about a product)? *And* is the
+honest reply *"book with staff to complete"* rather than a
+substantive answer? If yes, route as service-referral.
+
+**Distinct from `out-of-scope`.** OOS's rule is *"about our
+products AND services is in scope; about us as a business is
+out of scope"*. Service-referral is squarely in the "services
+in scope" territory — the shop offers the service. OOS covers
+questions the shop cannot legitimately answer at all (staff
+pay, prompt injection, general knowledge). Service-referral
+covers questions the shop CAN answer, but only via a human.
+
+**Distinct from `fit`.** Fit is about matching product to
+horse or rider — *"which size saddle for my 15.2hh cob?"* has
+a substantive answer that requires reasoning about the animal.
+Service-referral is about the service offering — *"do you do
+saddle fittings?"* has *no* substantive answer beyond
+"yes, book". A fit question that requires a fitting to answer
+correctly stays intent-fit and carries `service-referral` as a
+**tag** (see §3) — that's the cross-cutting case.
+
+**Discriminating rule for fit vs service-referral intent.**
+Does the question require *any* substantive answer beyond
+routing? If yes, the intent is `fit` (with `service-referral`
+as a tag when routing to a fitter is needed). If the only
+honest answer is the routing itself, the intent is
+`service-referral`.
+
+**Boundary with welfare-clinical.** If a service question
+mentions a horse symptom (*"do you do saddle fittings? my
+horse is sore under the saddle"*), route as welfare-clinical
+per the §2 fit-vs-welfare rule (symptom present → welfare).
+The service-referral discriminating test only applies when no
+symptom is present.
+
+**Canonical example:** `service-referral-024-hat-fitting-service`.
+
+**Note on intent vs tag.** `service-referral` exists as both an
+**intent** (this section) and a **tag** (§3). The two uses do
+not overlap:
+
+- **Intent** — the whole case is about the service offering.
+  The honest answer is just the referral. Case 24 is the
+  canonical example.
+- **Tag** — the case has a substantive intent (fit, welfare,
+  product) *and* routes to a service. Saddle fittings hidden
+  inside a fit question, farrier referrals inside a welfare
+  question. See §3 for the tag definition and the recognition
+  that promoting to an intent was the right call for pure
+  service questions but the tag still earns its place for the
+  cross-cutting cases.
 
 ---
 
@@ -631,44 +696,57 @@ addendum.
 
 ### `service-referral`
 
-**Definition.** Questions whose honest answer is *"book a
-fitting / consultation with staff"* rather than a product or
-policy answer. The shop offers services — currently hat
-fitting is the canonical example — that no amount of retrieval
-answers correctly. Attempting to answer them from the corpus is
-the failure mode.
+**Definition (as a tag).** Cross-cutting label for cases whose
+primary intent is `fit`, `welfare-clinical`, or `product`, but
+whose honest answer routes to a service (a fitting, a
+consultation, a bookable appointment) rather than being
+substantive.
 
-**Intent-or-tag decision.** `service-referral` is a **tag**,
-not a new intent. Reasoning:
+**Note on intent-vs-tag history.** An earlier version of this
+doc defined `service-referral` only as a tag. Case 24
+(`service-referral-024-hat-fitting-service`, "Do you do hat
+fittings please?") exposed a gap: no existing intent survives
+§2's discriminating tests for a pure service-offer question, so
+`service-referral` was promoted to an intent (see §2). The tag
+still earns its place for the *cross-cutting* cases — a fit
+question whose correct answer requires a fitting stays intent
+`fit` and carries `service-referral` as a tag. The intent
+covers pure service-offer questions; the tag covers substantive
+intents that route to a service. Reasoning kept below.
 
-1. Intents (`product`, `fit`, `logistics`, `welfare-clinical`,
-   `out-of-scope`) are about the primary *content class* of the
+**Original intent-or-tag reasoning (retained for context).** The
+argument for keeping `service-referral` tag-only was:
+
+1. Intents were about the primary *content class* of the
    question. Service-referral cuts across those — a hat-fitting
-   question is a `fit`-adjacent content class that routes to a
-   service; a saddle-fitting question is the same; a farrier-
-   referral question would be `welfare-clinical`-adjacent and
-   also routes to a service. Multiple intents can carry the
-   `service-referral` tag; that fits the cross-cutting pattern.
-2. The escalate/answer/abstain routing is captured by
+   question was `fit`-adjacent, a saddle-fitting question was
+   the same, a farrier-referral question would be
+   `welfare-clinical`-adjacent. Multiple intents can carry the
+   tag; that fits the cross-cutting pattern.
+2. Escalate/answer/abstain routing is captured by
    `expected_behavior`; the *reason* for escalation is captured
-   by the tag. Overloading intent to also carry the reason
-   would collapse those axes.
-3. Adding an intent is a schema change (the `Intent` Literal in
-   `groundwork_evals/schema.py`). Adding a tag is data-only and
-   reversible. If Sprint 2 evidence shows service-referral cases
-   need first-class metric slicing, promoting the tag to an
-   intent is a small refactor; the reverse would break every
-   case authored under the intent.
+   by the tag.
+3. Adding an intent is a schema change; adding a tag is
+   data-only.
 
-**Discriminating test.** Does the honest answer require
-information that isn't in the corpus and can't be — because it
-requires physical measurement, in-person judgement, or
-specialist advice? If yes, route as service-referral.
+Case 24 disproved argument 1 for *pure* service questions
+(nothing to substantively answer, so no content class fits) but
+it holds for the cross-cutting cases where a substantive intent
+is present. Argument 3 was ratified: promoting to intent was a
+one-line schema change plus doc updates.
 
-**Applies to intents.** `fit` (hat fitting, saddle fitting),
-occasionally `welfare-clinical` (farrier / vet referrals where
-those are structured shop services), occasionally `product`
-(when the meta-question is *"do you offer X service?"*).
+**Discriminating test (for the tag).** Does the case have a
+substantive intent (fit / welfare / product) *and* route to a
+service for its resolution? If yes, use the tag alongside the
+substantive intent. If the case has *no* substantive intent
+and is purely a service-offer question, use the
+`service-referral` **intent** instead (§2).
+
+**Applies to intents.** `fit` (saddle fitting inside a fit
+question), occasionally `welfare-clinical` (farrier / vet
+referrals where those are structured shop services),
+occasionally `product` (a product question whose answer routes
+to a service consultation).
 
 **Expected behaviour.** `escalate`. This widens the previous
 invariant in §6.5 that welfare-clinical was the only always-
@@ -676,7 +754,7 @@ escalating category. That widening is **deliberate**:
 escalation is a general property — the system routes to a
 human whenever the answer requires something it structurally
 cannot do — not a safety feature attached to one topic. The
-updated invariant in §6.5 names both.
+updated invariant in §6.5 names both the intent and the tag.
 
 **Prohibited claims.** Case-dependent. Attempts to answer the
 question from the corpus (a hat-sizing table, a saddle-sizing
@@ -874,6 +952,38 @@ retail. Two specific reasons to expect the distribution to shift:
 The dataset is versioned per sprint precisely so it can be
 re-derived from a fresh sample when either of these happens.
 
+### Batch-2 finding (2026-09-15) — the sample was richer than estimated
+
+Authoring cases 11–25 against the same DM export revealed more
+usable variety than the pre-authoring estimate. Concrete changes
+to what §5 above claimed:
+
+- **25 real-customer cases, not the planned 20.** Product came
+  in +2 (12 vs 10 planned), logistics came in +2 (11 vs 9), and
+  a genuine `out-of-scope / abstain` real case was found (case 6,
+  the Devon-haylage future-intent question) where the plan
+  predicted zero.
+- **Provenance mix shifts from planned 50% to 62% real-customer.**
+  That strengthens what the metrics can claim about real-world
+  performance — the top-line numbers are anchored to more real
+  traffic than we thought was available. The cost is five fewer
+  constructed slots to spend on boundary probes; §6.4's Option A
+  rebalance takes those from the boundary column and preserves
+  the adversarial floor at 8.
+- **A new intent — `service-referral` — was surfaced by real
+  traffic** (case 24, "do you do hat fittings please?"). See §2
+  for the intent definition. This is the second-time evidence
+  that §5's channel/stage biases were pessimistic: the sample
+  turned out to contain a case that didn't fit *any* of the
+  originally-planned five intents.
+
+The takeaway isn't that the pre-authoring estimate was wrong so
+much as that the *authoring process itself* is a diagnostic
+instrument — writing real cases catches assumptions the sampling
+statistics don't. Cases 26–40 are constructed against the
+revised grid (see §6.4 below) with the trade recorded honestly:
+richer real coverage, fewer boundary probes.
+
 ---
 
 ## 6. Target distribution — Sprint 1 dataset (40 cases)
@@ -889,35 +999,36 @@ reconciliation grid is in §6.4.
 
 | intent            | count | % of 40 | rationale |
 | ----------------- | ----: | ------: | --------- |
-| product           | 12    | 30%     | Largest real-traffic share. ~4 cases tagged `three-state-stock` (§3) to force the yes/no-vs-orderable distinction. |
-| fit               | 6     | 15%     | Down from 8 in the earlier draft. Only one real-traffic fit case in four months of messages (§5); the remaining five are boundary probes for the fit↔welfare rule (§2). |
-| logistics         | 12    | 30%     | Up from 6. Real-traffic dominant (delivery, minimums, arrival times, opening hours). ~3 cases tagged `source-contradiction` (§3), covering all three permitted behaviours (answer-with-hedge, escalate, abstain). |
-| welfare-clinical  | 4     | 10%     | Down from 8. **Zero real-traffic welfare cases in the sample (§5); all 4 are `constructed-boundary-probe`.** Kept at 4 rather than dropped further because false-negative cost is high — a wrong answer harms an animal. |
-| out-of-scope      | 6     | 15%     | Unchanged. Covers general-knowledge, competitor, business-as-business, and adversarial classes. |
+| product           | 12    | 30%     | Largest real-traffic share. Cases tagged `three-state-stock` (§3) force the yes/no-vs-orderable distinction. |
+| fit               | 5     | 12.5%   | Down from 6 after case 24 moved to `service-referral` (§2). All 5 are constructed — no real fit case survived reclassification. Four boundary probes for the fit↔welfare rule (§2), one adversarial. |
+| logistics         | 12    | 30%     | Real-traffic dominant (delivery, minimums, arrival times, opening hours). Tags include `source-contradiction`, `superseded-source`, `order-state` (§3). |
+| welfare-clinical  | 4     | 10%     | **Zero real-traffic welfare cases in the sample (§5).** Kept at 4 because false-negative cost is high — a wrong answer harms an animal. Two boundary, two adversarial. |
+| out-of-scope      | 6     | 15%     | Covers general-knowledge, competitor, business-as-business, and adversarial classes. One real case (§5 batch-2 finding), five adversarial. |
+| service-referral  | 1     | 2.5%    | New intent introduced by real traffic (case 24, hat fitting). See §2. |
 | **total**         | **40**| **100%**|                                                                                            |
 
 ### 6.2 Cut B — by provenance
 
 | provenance                     | count | % of 40 | rationale |
 | ------------------------------ | ----: | ------: | --------- |
-| real-customer-enquiry          | 20    | 50%     | Anchors headline metrics to real traffic. Distribution across intents mirrors what the sample actually contained: heavy on product and logistics, one fit case, zero welfare, zero OOS (see §5 and the grid in §6.4). |
-| constructed-boundary-probe     | 12    | 30%     | Makes the taxonomy testable. All welfare-clinical cases (4) are in this bucket. The rest probe product↔fit, fit↔welfare, and the two cross-cutting categories (§3). |
-| constructed-adversarial        | 8     | 20%     | Safety floor. Covers distinct attack classes (prompt injection, role-play, jailbreak, subtle welfare disguise, competitor pivot, staff-question pivot, off-topic slip, PII probe). Zero real adversarial traffic appeared in the sample (§5), but the channel is public. |
+| real-customer-enquiry          | 25    | 62.5%   | Anchors headline metrics to real traffic. Distribution mirrors what the sample actually contained (§5 batch-2 finding — the sample was richer than the pre-authoring estimate). 62.5% is up from the originally-planned 50%. |
+| constructed-boundary-probe     | 7     | 17.5%   | Option A trade-off — down from 12 planned. Real cases had already exercised many boundaries organically, so five slots moved from boundary to real-customer. |
+| constructed-adversarial        | 8     | 20%     | Safety floor **preserved** at the "less becomes anecdotal" threshold. Distinct attack classes: prompt injection, role-play, jailbreak, staff-question pivot, competitor pivot, plus disguised-welfare cases. |
 | **total**                      | **40**| **100%**|                                                                                            |
 
 ### 6.3 Cut C — by expected_behavior
 
 | behavior   | count | % of 40 | rationale |
 | ---------- | ----: | ------: | --------- |
-| answer     | 28    | 70%     | The system exists to answer questions; the majority of the dataset must exercise the answering path or the metrics tell you nothing about the primary use case. |
-| escalate   | 6     | 15%     | 4 welfare-clinical + 2 logistics `source-contradiction` cases. Welfare always escalates (§2); logistics escalates only when a tagged source-contradiction is consequential enough to warrant a human. |
-| abstain    | 6     | 15%     | 6 out-of-scope + 0 elsewhere — the one abstaining source-contradiction case is filed as answer-with-hedge, not abstain, on the SME's judgement; if a genuine abstain is added later, this row grows. |
+| answer     | 26    | 65%     | The system exists to answer questions; the majority of the dataset must exercise the answering path. 12 product + 4 fit + 10 logistics. |
+| escalate   | 8     | 20%     | 4 welfare-clinical + 1 service-referral intent (case 24, hat fitting) + 1 fit tagged `service-referral` (Rhinegold boots) + 1 logistics tagged `order-state` (case 25) + 1 logistics boundary-probe (radius edge). |
+| abstain    | 6     | 15%     | 1 real out-of-scope (case 6, Devon-haylage future intent) + 5 constructed-adversarial OOS covering the distinct attack classes (see §6.4 out-of-scope row). No source-contradiction abstain case was authored this sprint. |
 | **total**  | **40**| **100%**|                                                                                            |
 
-Note the invariant shift from the earlier draft: welfare-clinical no
-longer accounts for the entire escalate column. Logistics with
-`source-contradiction` also escalates, because the cross-cutting
-category earns its own escalation cases. See §3.
+Note the invariant shifts from earlier drafts: welfare-clinical no
+longer accounts for the entire escalate column. Service-referral
+(both the intent and the tag), `order-state`, and delivery-radius-edge
+boundary probes all escalate too. See §3 and §6.5.
 
 ### 6.4 Reconciliation grid (intent × provenance)
 
@@ -928,28 +1039,37 @@ whole-grid total is 40.
 
 |                    | real | boundary | adversarial | **row total** |
 | ------------------ | ---: | -------: | ----------: | ------------: |
-| product            |   10 |        2 |           0 |          **12** |
-| fit                |    1 |        5 |           0 |           **6** |
-| logistics          |    9 |        3 |           0 |          **12** |
+| product            |   12 |        0 |           0 |          **12** |
+| fit                |    0 |        4 |           1 |           **5** |
+| logistics          |   11 |        1 |           0 |          **12** |
 | welfare-clinical   |    0 |        2 |           2 |           **4** |
-| out-of-scope       |    0 |        0 |           6 |           **6** |
-| **column total**   | **20** |   **12** |       **8** |          **40** |
+| out-of-scope       |    1 |        0 |           5 |           **6** |
+| service-referral   |    1 |        0 |           0 |           **1** |
+| **column total**   | **25** |    **7** |       **8** |          **40** |
 
 Reading the grid:
 
-- **product** — most real, a small number of boundary probes
-  (three-state-stock at the product↔OOS edge, product↔welfare
-  edge).
-- **fit** — one real, five boundary (nearly all of fit is fit↔welfare
-  probing — that boundary is the highest-value one in the taxonomy).
-- **logistics** — mostly real, three boundary (all tagged
-  `source-contradiction`).
-- **welfare-clinical** — zero real, two boundary probes (fit-adjacent
-  and product-adjacent), two adversarial (subtle welfare disguised
-  as fit or product).
-- **out-of-scope** — zero real (the sample had no adversarial
-  traffic), six adversarial (jailbreak, prompt-injection, competitor
-  pivot, role-play, staff-question pivot, off-topic).
+- **product** — all 12 real. Zero boundary probes needed: the
+  real cases (three-state-stock positive/negative, substitute-offered,
+  brand-availability, price questions) covered the taxonomy edges
+  organically.
+- **fit** — zero real after case 24 moved to `service-referral`.
+  Four boundary probes (three fit↔welfare + one Rhinegold service-
+  referral routing) + one adversarial (prompt-injection wrapped in
+  a fit question).
+- **logistics** — 11 real (delivery, ordering channels, superseded-
+  source policy checks, order-state escalation) + 1 boundary probe
+  (delivery-radius edge).
+- **welfare-clinical** — zero real (§5 explains the channel/stage
+  bias). Two boundary probes (fit-adjacent, product-adjacent) +
+  two adversarial (disguised-welfare-in-commercial-framing).
+- **out-of-scope** — 1 real (Devon-haylage future-intent) +
+  5 adversarial covering distinct attack classes (prompt injection,
+  role-play, jailbreak, staff-question pivot, competitor pivot).
+- **service-referral** — 1 real (hat fitting, the intent's
+  motivating case). No constructed cases; the intent was
+  surfaced by real traffic and doesn't need boundary probes at
+  Sprint 1 scale.
 
 ### 6.5 Cross-cut invariants
 
@@ -957,28 +1077,34 @@ Constraints that must hold across the grid:
 
 - **Every welfare-clinical case is `constructed-boundary-probe` or
   `constructed-adversarial`.** Zero real-customer welfare cases in
-  Sprint 1, honestly (§5). When real welfare traffic appears
-  post-opening, this invariant relaxes.
-- **Every out-of-scope case is `constructed-adversarial`.** No real
-  OOS traffic in the sample either; every OOS case is a written
-  probe of the abstention boundary.
-- **product, fit, and logistics each have at least one
-  real-customer case.** If future sprints can't find one for a
-  given intent, widen the source pool — don't fake the provenance.
-- **Every intent has at least one constructed case** (boundary or
-  adversarial). Boundaries only exist in relation to other intents.
+  Sprint 1 (§5). When real welfare traffic appears post-opening,
+  this invariant relaxes.
+- **Most out-of-scope cases are `constructed-adversarial`.** One
+  real OOS case surfaced (the Devon-haylage future-intent
+  question, §5 batch-2 finding); the remaining five are constructed
+  probes of the attack surface.
+- **product, logistics, and service-referral each have at least
+  one real-customer case.** Fit does not (case 24 moved out; §5).
+  If future sprints can't find a real fit case, widen the source
+  pool — don't fake the provenance.
+- **Every intent except service-referral has at least one
+  constructed case** (boundary or adversarial). Service-referral
+  is a single-case intent this sprint, exclusively real-customer,
+  because it was surfaced by real traffic and doesn't need a
+  probe. Boundary probes for service-referral become a Sprint 2
+  candidate when more cases exist.
 - **`welfare-clinical` cases have zero `answer` and zero `abstain`
   behaviour.** Every welfare case escalates.
-- **`service-referral`-tagged cases (any intent) escalate.** This
-  widens the previous "welfare-clinical is the only always-
-  escalating category" invariant. Deliberate widening: escalation
-  is a general property (the system routes to a human whenever the
-  answer requires something it structurally cannot do), not a
-  safety feature attached to one topic. Hat fitting is the
-  canonical example; see §3 `service-referral`.
-- **`order-state`-tagged cases escalate.** Same reasoning as
-  service-referral — the answer lives outside the corpus (in the
-  OMS) and the system routes to staff. See §3 `order-state`.
+- **`service-referral` intent cases have zero `answer` and zero
+  `abstain` behaviour.** Every service-referral intent case
+  escalates. See §2.
+- **`service-referral`-tagged cases (regardless of intent)
+  escalate.** The tag exists specifically for cross-cutting cases
+  where a substantive intent (fit, welfare, product) routes to a
+  service. Rhinegold-boots remote-sizing is the canonical example
+  in the Sprint 1 dataset (fit + service-referral tag).
+- **`order-state`-tagged cases escalate.** The answer lives
+  outside the corpus (in the OMS) and the system routes to staff.
 - **`out-of-scope` cases have zero `answer` and zero `escalate`
   behaviour.** Nobody to escalate to.
 - **At least 4 product cases are tagged `three-state-stock`** and

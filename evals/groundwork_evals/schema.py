@@ -15,7 +15,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-Intent = Literal["product", "fit", "logistics", "welfare-clinical", "out-of-scope"]
+Intent = Literal[
+    "product",
+    "fit",
+    "logistics",
+    "welfare-clinical",
+    "out-of-scope",
+    "service-referral",
+]
 ExpectedBehavior = Literal["answer", "abstain", "escalate"]
 
 
