@@ -437,3 +437,62 @@ Two follow-ups replace the unmeasurable gate:
 The main body of the ADR is unchanged. The decision to extract
 attributes with source-span grounding at ingest, using
 gpt-4o-mini and typed per-product-type schemas, holds.
+
+### Per-attribute coverage (run 2, all in-schema products)
+
+Aggregate "297 stored across 120 products" hides which attributes
+the extractor is finding. Disaggregated by
+`packages/ingestion/src/coverage-cli.ts` (`pnpm coverage`, read-only,
+reproducible on the same corpus). `non-null` = extractor returned
+a value with source_span; `null` = extractor explicitly returned
+value=null (fact not in source); `missing` = attribute not emitted
+at all.
+
+**Feed (n = 90 — the largest sample and therefore the informative one):**
+
+| attribute | non-null | null | missing |
+| --- | ---: | ---: | ---: |
+| `form` | 91.1% | 5 | 3 |
+| `species` | 78.9% | 12 | 7 |
+| `pack_size_kg` | 46.7% | 34 | 14 |
+| `life_stage` | 24.4% | 31 | 37 |
+| `feeding_rate_g_per_100kg_per_day` | **1.1%** | 37 | 52 |
+| `colour` | 2.2% | 37 | 51 |
+
+**Bedding (n = 8):** `material` 100%, `dust_extracted` and
+`intended_species` 62.5%, `bale_size` 12.5%, `colour` 0%.
+
+**Haylage (n = 6):** `cut_type` 100%, `moisture_profile` 50%,
+`bale_weight_kg` and `colour` 16.7%.
+
+**Supplements (n = 14):** `form` 100%, `target_concern` 92.9%,
+`active_ingredients` 64.3%, `daily_dose_g` 21.4%,
+`pack_duration_days` 0%, `colour` 0%.
+
+**Outdoor Rugs (n = 2):** too small to draw conclusions —
+`colour` and `fit` 100%, `waterproof_mm` and `breathability` 0%.
+
+**Reading the Feed row is the one that matters.** `feeding_rate` at
+1.1% is not the extractor hedging. It's the corpus. 89 of 90 feed
+descriptions do not state a feeding rate in words. This is exactly
+the coverage gap ADR-0003 diagnosed against the raw CSV — the
+extraction pass hasn't invented facts that weren't there. So on the
+question ADR-0003 set out to answer ("can product descriptions
+alone answer feeding questions?"), the answer is *still* no, and
+the post-extraction number confirms that the fault lay in the
+source, not in the extraction layer.
+
+**Where extraction is worth its cost** is the addressable-fact
+axes that *are* present in prose but weren't structured: `form`
+(91.1%), `species` (78.9%), `target_concern` (92.9%),
+`active_ingredients` (64.3%), `material` (100%), `cut_type`
+(100%). Filters on these become viable at retrieval time; they
+weren't before.
+
+**The "missing" column** shows the model sometimes omits an
+attribute entirely rather than emitting `value: null`. 52 of the
+89 non-answered feeding_rate cases fall this way. Sprint 2 prompt
+refinement could shift "missing" to "null" without changing the
+meaningful non-null numbers; the current prompt says "for each
+attribute in the schema return one entry" but the JSON schema
+allows the model to skip. Low-priority polish.

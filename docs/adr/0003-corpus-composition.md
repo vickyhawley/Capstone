@@ -248,3 +248,43 @@ gracefully to a catalogue-only retriever with an unused enum value.
   and if fact coverage moves materially — say, ingredients climbs
   above 60% because a supplier bulk-imports composition — revisit
   the balance between catalogue and guides.
+
+---
+
+## Addendum — post-extraction confirmation (2026-09-15)
+
+`pnpm coverage` (see `packages/ingestion/src/coverage-cli.ts`)
+measures the same kind of coverage as `profile_catalogue.py` but
+against the post-extraction chunks in Supabase, per attribute key
+per product type. The result confirms this ADR's premise sharply:
+
+- **Feed** (n = 90, largest and most trustworthy sample):
+  `feeding_rate_g_per_100kg_per_day` is populated on **1 of 90
+  products (1.1%)**. Not the extractor being conservative — the
+  fact is absent from the descriptions. Compare
+  `profile_catalogue.py`'s tight/broad range of 1.0–3.0% for
+  feeding-rate mentions in raw prose; the extractor's number
+  sits inside that range, so extraction did not close the gap
+  because there is nothing in the source to extract.
+- **Outdoor Rugs** (n = 2, sample too small):
+  `waterproof_mm` 0%, `breathability` 0%. The Equidry Aura
+  description that motivated this ADR IS in the catalogue but
+  under type `Equestrian Clothing`, which has no schema this
+  sprint — a Sprint 2 candidate.
+
+**Where extraction is worth its cost** — the addressable-fact
+axes that ARE in prose but were not structured before:
+
+- Feed: `form` 91.1%, `species` 78.9%
+- Supplements: `form` 100%, `target_concern` 92.9%, `active_ingredients` 64.3%
+- Bedding: `material` 100%
+- Haylage: `cut_type` 100%
+
+Retrieval-time filters on these attributes are newly viable and
+weren't before this sprint. That's the corpus-composition win
+ADR-0003 argued for: the two-document-types plan doesn't rely on
+extraction rescuing sparse prose — extraction lifts what's there,
+and the prose guides carry the facts that aren't (feeding rates,
+fit rules, waterproof ratings).
+
+Full per-attribute breakdown lives in ADR-0004's addendum.

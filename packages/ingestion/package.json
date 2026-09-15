@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "test": "vitest run",
-    "ingest": "tsx --env-file=../../.env.local src/ingest-cli.ts"
+    "ingest": "tsx --env-file=../../.env.local src/ingest-cli.ts",
+    "coverage": "tsx --env-file=../../.env.local src/coverage-cli.ts"
   },
   "dependencies": {
     "@groundwork/core": "workspace:*",

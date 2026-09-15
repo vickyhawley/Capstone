@@ -17,7 +17,8 @@
     "dev": "pnpm -r --parallel --if-present dev",
     "dev:web": "pnpm --filter @groundwork/web dev",
     "dev:api": "pnpm --filter @groundwork/api dev",
-    "ingest": "pnpm --filter @groundwork/ingestion ingest"
+    "ingest": "pnpm --filter @groundwork/ingestion ingest",
+    "coverage": "pnpm --filter @groundwork/ingestion coverage"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
