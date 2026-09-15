@@ -24,3 +24,7 @@ export {
   type SafetyRule,
 } from './router/rules.js';
 export { CLASSIFIER_MODEL, classifyWithLLM } from './router/llm-classifier.js';
+
+export { RulesSafetyGate } from './safety-gate/rules-gate.js';
+export { INTENT_DEFAULT_BEHAVIOUR } from './safety-gate/intent-policy.js';
+export { TAG_RULES, matchTagRule, type TagRule } from './safety-gate/tag-rules.js';

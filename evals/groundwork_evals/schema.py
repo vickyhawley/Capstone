@@ -24,6 +24,8 @@ Intent = Literal[
     "service-referral",
 ]
 ExpectedBehavior = Literal["answer", "abstain", "escalate"]
+Behavior = ExpectedBehavior  # alias — the API returns the same 3-value set
+EscalationTarget = Literal["vet", "staff-service", "staff-order"]
 
 
 class EvalCase(BaseModel):
@@ -74,6 +76,13 @@ class ApiResponse(BaseModel):
       query carries an injection payload (ADR-0010 amendment 1).
     - `adversarial_pattern` names the rule that fired, when
       applicable.
+
+    Safety-gate fields (added Sprint 2, GW-11, per ADR-0011):
+    - `behavior` is the safety gate's dispatch decision. Same 3-value
+      set as `EvalCase.expected_behavior`. Optional so pre-gate
+      responses still validate.
+    - `escalation_target` is populated iff `behavior == 'escalate'`.
+      Names the target audience for the escalation copy (GW-12).
     """
 
     answer: str = ""
@@ -85,6 +94,9 @@ class ApiResponse(BaseModel):
     intent: Intent | None = None
     adversarial_suspected: bool = False
     adversarial_pattern: str | None = None
+
+    behavior: Behavior | None = None
+    escalation_target: EscalationTarget | None = None
 
     model_config = {"extra": "ignore"}
 

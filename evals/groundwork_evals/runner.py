@@ -113,11 +113,18 @@ def run(args: argparse.Namespace) -> int:
     aggregates = aggregate(per_metric_lists)
     breaches: list[Breach] = find_breaches(aggregates, thresholds)
 
-    # Per-intent breakdown for intent_classification_accuracy. ADR-0010
-    # argues the aggregate hides class-specific problems — welfare-clinical
-    # at n=4 disappears into the mean. Emit the per-class table so
-    # misrouting is visible per class in the results file.
-    intent_breakdown = _per_intent_intent_accuracy(cases, per_case_results)
+    # Per-intent breakdowns. ADR-0010 (router) and ADR-0011 (safety
+    # gate) both argue the aggregate hides class-specific problems —
+    # welfare-clinical at n=4 disappears into the mean. Emit per-class
+    # tables so misdispatch is visible per class in the results file.
+    per_intent_breakdowns = {
+        "intent_classification_accuracy": _per_intent_metric(
+            cases, per_case_results, "intent_classification_accuracy"
+        ),
+        "correct_behavior_dispatch": _per_intent_metric(
+            cases, per_case_results, "correct_behavior_dispatch"
+        ),
+    }
 
     write_results(
         args.results_dir,
@@ -129,7 +136,7 @@ def run(args: argparse.Namespace) -> int:
         thresholds,
         breaches,
         per_case_results,
-        intent_breakdown,
+        per_intent_breakdowns,
     )
 
     if breaches:
@@ -144,20 +151,23 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _per_intent_intent_accuracy(
+def _per_intent_metric(
     cases: list[EvalCase],
     outcomes: list[CaseOutcome],
+    metric: str,
 ) -> dict[str, dict[str, Any]]:
-    """Per-intent breakdown of intent_classification_accuracy.
+    """Per-intent breakdown of a binary (0/1) metric.
 
     Reads directly from the per-case outcomes rather than recomputing.
-    Groups by the case's *actual* intent (not the router's prediction)
-    so the reported number is per-class recall — the metric that
-    surfaces misrouting per class.
+    Groups by the case's *actual* intent so the reported number is
+    per-class accuracy on that metric. Used for both the router
+    (intent_classification_accuracy) and the safety gate
+    (correct_behavior_dispatch) — same aggregate-hides-class-problems
+    concern applies to both per their respective ADRs.
     """
     by_intent: dict[str, dict[str, int]] = {}
     for case, outcome in zip(cases, outcomes):
-        m = outcome.metrics.get("intent_classification_accuracy")
+        m = outcome.metrics.get(metric)
         if m is None or not m.get("applicable", True):
             continue
         bucket = by_intent.setdefault(case.intent, {"correct": 0, "total": 0})
@@ -184,7 +194,7 @@ def write_results(
     thresholds: dict[str, float],
     breaches: list[Breach],
     cases: list[CaseOutcome],
-    intent_breakdown: dict[str, dict[str, Any]] | None = None,
+    per_intent_breakdowns: dict[str, dict[str, dict[str, Any]]] | None = None,
 ) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     sprint_dir = results_dir / f"sprint-{sprint}"
@@ -211,8 +221,11 @@ def write_results(
         "breaches": [asdict(b) for b in breaches],
         "cases": [asdict(c) for c in cases],
     }
-    if intent_breakdown:
-        payload["intent_classification_by_intent"] = intent_breakdown
+    if per_intent_breakdowns:
+        # Emit under a per-metric key so the results file can carry
+        # breakdowns for multiple metrics side-by-side without shape
+        # collisions.
+        payload["per_intent_breakdowns"] = per_intent_breakdowns
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, sort_keys=False)
     return out_path

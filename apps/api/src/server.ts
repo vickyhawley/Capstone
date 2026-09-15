@@ -1,3 +1,4 @@
+import { RulesSafetyGate } from '@groundwork/adapters';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { createAnswerRoute, defaultAnswerDeps } from './answer.js';
@@ -72,11 +73,13 @@ app.get('/api/stream/demo', (c) => {
   });
 });
 
-// POST /api/answer — router-only shape for Sprint 2 (GW-10 landed,
-// GW-11 pending). Route is registered once; deps are built lazily
-// on first request inside the handler so a missing OPENAI_API_KEY
-// produces a 500 with a clear message rather than an import-time
-// crash the deploy log buries.
+// POST /api/answer — Sprint 2 shape (GW-10 + GW-11 landed).
+// Route is registered once; deps are built lazily on first request
+// inside the handler so a missing OPENAI_API_KEY produces a 500 with
+// a clear message rather than an import-time crash the deploy log
+// buries. The safety gate has no async construction cost so it's
+// built once eagerly.
+const eagerSafetyGate = new RulesSafetyGate();
 app.route(
   '/api/answer',
   createAnswerRoute({
@@ -86,5 +89,6 @@ app.route(
         return deps.router.route(query);
       },
     },
+    safetyGate: eagerSafetyGate,
   }),
 );

@@ -3,6 +3,7 @@ from __future__ import annotations
 from groundwork_evals.metrics import (
     aggregate,
     correct_abstention,
+    correct_behavior_dispatch,
     false_refusal,
     groundedness,
     intent_classification_accuracy,
@@ -275,5 +276,55 @@ def test_intent_classification_applicable_on_all_expected_behaviors():
         case = _answer_case(expected_behavior=beh, intent=intent)
         resp = ApiResponse(intent=intent)
         r = intent_classification_accuracy(case, resp)
+        assert r.applicable is True
+        assert r.score == 1.0
+
+
+# ---------- correct_behavior_dispatch (GW-11) ----------
+
+
+def test_behavior_dispatch_scores_1_on_match():
+    case = _answer_case(expected_behavior="answer")
+    resp = ApiResponse(behavior="answer")
+    r = correct_behavior_dispatch(case, resp)
+    assert r.score == 1.0
+    assert r.applicable is True
+
+
+def test_behavior_dispatch_scores_0_on_mismatch():
+    case = _answer_case(expected_behavior="answer")
+    resp = ApiResponse(behavior="abstain")
+    r = correct_behavior_dispatch(case, resp)
+    assert r.score == 0.0
+    assert r.applicable is True
+    assert "predicted=abstain" in r.reason
+    assert "actual=answer" in r.reason
+
+
+def test_behavior_dispatch_na_when_response_missing_behavior():
+    # Pre-GW-11 API shape returns no behavior field. Metric should be
+    # non-applicable rather than scoring 0 — otherwise pre-gate runs
+    # trigger a false failure on the behavior threshold.
+    case = _answer_case(expected_behavior="answer")
+    resp = ApiResponse()  # behavior defaults to None
+    r = correct_behavior_dispatch(case, resp)
+    assert r.applicable is False
+
+
+def test_behavior_dispatch_ignores_escalation_target():
+    # Target correctness is GW-12's concern. This metric only checks
+    # the top-level dispatch decision.
+    case = _escalate_case()
+    resp_correct_target = ApiResponse(behavior="escalate", escalation_target="vet")
+    resp_wrong_target = ApiResponse(behavior="escalate", escalation_target="staff-order")
+    assert correct_behavior_dispatch(case, resp_correct_target).score == 1.0
+    assert correct_behavior_dispatch(case, resp_wrong_target).score == 1.0
+
+
+def test_behavior_dispatch_applicable_on_all_expected_behaviors():
+    for beh in ("answer", "escalate", "abstain"):
+        case = _answer_case(expected_behavior=beh)
+        resp = ApiResponse(behavior=beh)
+        r = correct_behavior_dispatch(case, resp)
         assert r.applicable is True
         assert r.score == 1.0

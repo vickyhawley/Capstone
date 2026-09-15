@@ -1,3 +1,4 @@
 {
-  "intent_classification_accuracy": 0.85
+  "intent_classification_accuracy": 0.85,
+  "correct_behavior_dispatch": 0.90
 }

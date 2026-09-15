@@ -5,6 +5,12 @@ export type { Retriever, RetrievalQuery, RetrievedChunk } from './ports/retrieve
 export { INTENTS } from './ports/router.js';
 export type { Intent, Router, RouterQuery, RouterDecision } from './ports/router.js';
 export type {
+  Behaviour,
+  EscalationTarget,
+  RefusalReason,
+  SafetyGate,
+} from './ports/safety-gate.js';
+export type {
   LanguageModel,
   CompletionRequest,
   CompletionChunk,
