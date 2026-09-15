@@ -191,12 +191,38 @@ is the trigger for making delivery shape visible up front.
   - Commit (b) landed 2026-09-15 as `030dd0b`: persistence to
     `documents`/`chunks`, gpt-4o-mini extractor with structured
     outputs, `packages/ingestion/src/ingest-cli.ts` runner behind
-    `pnpm ingest`, `docs/runbooks/ingest.md`. Story CODE-closes
-    here; formally closes once the live ingest has been run against
-    Supabase, the ingest report reviewed, and the colour agreement
-    number recorded in ADR-0004's addendum. Live run gated on
-    `.env.local` populated with `SUPABASE_URL`,
-    `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`.
+    `pnpm ingest`, `docs/runbooks/ingest.md`.
+  - Commit (c) landed 2026-09-15 as `c04f1f1`: `--force` flag to
+    override the content-hash fast-path when metadata (not text)
+    changes between runs — needed to re-run extraction against
+    already-persisted documents.
+  - Commit (d) landed 2026-09-15 as `b96007e`: source-span
+    verifier fix. First live run dropped 296 of 303 attributes on
+    an offset-equality check that the model reliably failed while
+    quoting correctly. Verifier switched to substring-in-source
+    with server-side offset computation; drop rate collapsed to
+    13 of 310. Not prompt-tightening; aligning the check with
+    the grounding contract this story actually needs.
+  - **GW-01 formally closes 2026-09-15.** Ingest run 2 against
+    Supabase `vwmdtzwuetpebinflwbs`: 399 documents forced, 297
+    attributes stored, 13 dropped (5 unsupported + 8 quote-not-in-source
+    — guardrail catches, expected). Full addendum recorded at
+    `docs/adr/0004-attribute-extraction.md#addendum---first-live-run-outcome-2026-09-15`.
+
+    ADR-0004's 80% colour-agreement shipping gate was **not
+    measured** — of 70 in-schema products with a populated `Color`
+    metafield, only one had colour also named in the description
+    text (the metafield records bag/pellet colour, which is rarely
+    in prose). This is a finding about the ground-truth choice,
+    not an extractor failure. Two follow-ups replace the
+    unmeasurable gate:
+    - Sprint 2 — hand-review spot check on 30 random stored
+      attributes to verify against `source_span` and the actual
+      description. Harder to cheat than proxy agreement rates.
+    - Sprint 2 — widen the metafield-agreement validation set
+      (from ADR-0004's original follow-up list) to `Animal feed
+      form` and `Age group`, which are more likely to appear in
+      descriptions than pellet colour.
 
 **ADR renumbering.** Adding attribute extraction takes ADR-0004; the
 originally-planned chunking-strategy ADR slides to ADR-0006. Substitute

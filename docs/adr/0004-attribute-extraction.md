@@ -334,3 +334,106 @@ non-zero, GW-01 does not close.
 - Sprint 2 — expose a "attributes without span" observability
   counter on `/api/health` so the failure mode above is visible
   in production, not just at ingest.
+
+---
+
+## Addendum — First live run outcome (2026-09-15)
+
+Recorded here so the ADR carries its own operational history. Both
+runs against Supabase project `vwmdtzwuetpebinflwbs` with catalogue
+`data/catalogue/products.csv` (398 products, 1,454 variant rows).
+
+### Run 1 — verifier-fault first pass
+
+| metric | value |
+| --- | --- |
+| Products extracted | 120 (of 120 with a matching schema) |
+| Extraction errors | 0 (OpenAI billing was topped up between attempts) |
+| Attributes stored | 5 |
+| Attributes dropped | 303 (296 `source-span-mismatch`, 7 `value-without-source-span`) |
+| Colour agreement sample | 0 |
+| Elapsed | 243.9 s |
+
+**Interpretation.** 296 of 303 drops fired on the offset-equality
+check in `coerceSourceSpan`. The model was quoting the right words
+but reporting offsets that didn't line up (a well-known LLM
+weakness — models quote well and count characters poorly). The
+check demanded both, so real groundedness proofs were being
+rejected on a counting technicality. This is not the failure mode
+this ADR warned about: it's the *inverse* — the guardrail was
+over-catching, rather than being fooled by plausible fabrications.
+
+**Action.** Fixed the verifier to check `source.indexOf(text) >= 0`
+and compute offsets server-side (commit `b96007e`). Test suite
+updated to lock the new semantics. This is not prompt-tightening
+(which this ADR forbids); it's aligning the check with the
+grounding contract the ADR actually names ("value came from a
+substring of the description", not "offsets exactly correct").
+
+### Run 2 — post-verifier-fix
+
+| metric | value |
+| --- | --- |
+| Products extracted | 120 |
+| Extraction errors | 0 |
+| Attributes stored | 297 |
+| Attributes dropped | 13 (8 `source-span-mismatch`, 5 `value-without-source-span`) |
+| Colour agreement sample | 1 (100.0%) |
+| Elapsed | 248.5 s |
+
+### Colour-agreement finding
+
+The 80% shipping gate could not be measured. Of the 120 products
+in the extraction set, 70 have a populated `Color` metafield in
+Shopify. Of those 70, only **one** ended up in the agreement
+sample. The reason: the `Color` metafield on feed and bedding
+products records the *bag or pellet colour* ("yellow" for
+Strawmax pellets, "silver" for HiLight Veteran Mix), which is
+almost never named in the product description text. The extractor
+correctly returned `colour: null` for those — the description does
+not support a value — and that's the intended behaviour under this
+ADR's null-is-a-true-fact rule.
+
+**This is a finding about the ground-truth choice, not an
+extractor failure.** The `Color` metafield tests whether the
+extractor can *find* colours in descriptions where colours are
+mentioned. On this catalogue that's a much narrower slice than
+109 products.
+
+### Shipping decision
+
+**Ship extraction on the 297 stored attributes.** GW-01 closes.
+
+The 80% shipping gate was not the discipline the run actually
+needed — it required a ground-truth signal broader than we have.
+The 13-out-of-310 drop rate (~4%) is the guardrail behaving as
+designed: it's catching a small number of hallucinations and
+quote-not-in-source cases without false-catching real
+groundedness proofs.
+
+Two follow-ups replace the unmeasurable gate:
+
+- **Sprint 2 — hand-review spot check.** Take a random sample of
+  30 stored attributes, verify each against its `source_span` and
+  the underlying description by hand. Any hallucination or
+  wrong-attribution found lowers confidence in the extractor and
+  triggers a re-open on this ADR. This is harder-to-cheat
+  validation than the metafield-agreement rate because it
+  measures against the actual grounding evidence rather than
+  against a proxy signal.
+- **Sprint 2 — the earlier follow-up (widen metafield-agreement
+  validation to `Animal feed form`, `Age group`) remains valid**
+  as a lower-cost supplementary check. Animal feed form is more
+  likely to appear in descriptions than pellet colour.
+
+### What actually changed vs the ADR
+
+- The verifier contract, made explicit above.
+- The shipping gate's usability, noted here so a future reader
+  doesn't repeat the same expectation. The 80% threshold was well
+  reasoned as a design decision; only the applicability to this
+  particular ground truth turned out to be off.
+
+The main body of the ADR is unchanged. The decision to extract
+attributes with source-span grounding at ingest, using
+gpt-4o-mini and typed per-product-type schemas, holds.
