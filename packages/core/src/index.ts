@@ -11,6 +11,8 @@ export type {
   SafetyGate,
 } from './ports/safety-gate.js';
 export { ABSTAIN_COPY, ESCALATION_COPY, renderBehaviour } from './copy/behaviour-copy.js';
+export { ARTICLE_50_DISCLOSURE } from './compliance/disclosure.js';
+export { CAPABILITY_PROFILE, type CapabilityProfile } from './compliance/capability-profile.js';
 export type {
   LanguageModel,
   CompletionRequest,

@@ -1308,3 +1308,90 @@ in the overall aggregate.
   historical files remain unchanged and reference the old
   shape. If a Sprint 3 tool reads across runs, it needs to
   handle both shapes.
+
+### GW-15 close-out (2026-09-16)
+
+**Story:** Article 50 disclosure + capability profile. Compliance-
+shaped work with two artefacts (disclosure text, capability
+profile) exposed via a new `/api/about` endpoint. ADR-0012 pins
+the design decisions: content lives as typed constants in core,
+runtime constants are locked to the profile by test, phrasing rule
+("AI assistant") is a test invariant.
+
+**What shipped**
+
+- `docs/adr/0012-compliance-surface.md` — the ADR. Descriptive,
+  same style as ADR-0010/0011. Names five decisions
+  (constants-not-markdown, one endpoint, INTENTS lock,
+  matched-by-test-where-possible, "AI assistant" phrasing) and
+  three explicitly-not-enforced cases (user never reads it, user
+  reads-then-forgets, canDo/cannotDo drift).
+- `packages/core/src/compliance/disclosure.ts` — the disclosure
+  text as a single string. One paragraph, ≤ 600 characters,
+  covers the four content requirements from the ADR.
+- `packages/core/src/compliance/capability-profile.ts` —
+  `CapabilityProfile` interface + `CAPABILITY_PROFILE` constant.
+  Four sections: `canDo` (5 items), `cannotDo` (7 items),
+  `escalatesTo` (3 items — one per `EscalationTarget`), `intents`
+  (6 items — one per `INTENTS` value).
+- `packages/core/src/compliance/disclosure.test.ts` — 10 tests.
+  Required-phrase checks ("AI assistant", "vet", "shop", plus
+  routing/reach phrasings), phrasing-rule checks (no "bot", no
+  "our assistant"), length checks (>= 80, <= 600 chars).
+- `packages/core/src/compliance/capability-profile.test.ts` —
+  12 tests. Load-bearing ones: intents list matches `INTENTS`
+  exactly, escalation targets match the runtime set exactly,
+  no duplicates. Content-shape ones: all entries non-empty.
+  Behavior-alignment ones: cannotDo mentions clinical refusal,
+  in-person-fitting refusal, and instruction/persona refusal
+  (matches ADR-0011 dispatch shape).
+- `apps/api/src/about.ts` + `apps/api/src/about.test.ts` —
+  `GET /api/about` factory + 5 vitest coverage tests. Response
+  shape uses snake_case (`can_do`, `cannot_do`, `escalates_to`)
+  matching the ApiResponse convention.
+- `apps/api/src/server.ts` — routes `/api/about` to the new
+  factory. No auth exemption; rides the shared rate-limit
+  middleware.
+
+**Live-endpoint smoke test result**
+
+`GET http://localhost:8787/api/about` returned the disclosure
+(482 chars) and the capability profile (5 canDo / 7 cannotDo /
+3 escalatesTo / 6 intents). Machine-readable JSON, snake_case
+throughout. No auth failures, no rate-limit issues at n=1.
+
+**What this unblocks next**
+
+- **A chat UI (Sprint 3+)** — will render the disclosure before
+  the first turn using this endpoint. Nothing to build here;
+  the artefact is available.
+- **Auditor evidence bundle** — `/api/about` is the pointer
+  compliance can hand to an auditor. No further work needed to
+  make the disclosure discoverable.
+- **Capability-profile drift alarms** — if a Sprint 3 ADR adds
+  a new intent or escalation target without updating the
+  profile, the lock-to-runtime tests fail. That's the intended
+  drift alarm.
+
+**Follow-ups surfaced during the story**
+
+- **Tone review by the shop.** Same follow-up as GW-12: the
+  disclosure + capability profile are first drafts. Constraint
+  compliance is tested; tone isn't. Expect at least one pass of
+  wording edits when the shop reads them.
+- **`canDo` / `cannotDo` drift is not testable mechanically.**
+  ADR-0012 §Decision 4 names this: the free-text sections rely
+  on review discipline. A Sprint 3+ story that changes system
+  behaviour has to update these too. Consider adding a
+  post-checklist to the ADR template.
+- **No UI to embed the disclosure in yet.** The web app is a
+  scaffold shell. This story ships the artefact; the UI
+  integration (when-to-show, where-to-show, dismissable?) is
+  Sprint 3+ work. Article 50's "before the interaction proceeds"
+  requirement lands on that UI story, not this one.
+- **The endpoint isn't documented in the README.** Sprint 2
+  ships eight endpoints total across the API; none are listed
+  in the top-level README. A Sprint 3 doc pass across the API
+  surface is worth doing — `/api/health`, `/api/answer`,
+  `/api/about`, `/api/stream/demo` are the four the API layer
+  exposes today.

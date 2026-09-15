@@ -1,6 +1,7 @@
 import { RulesSafetyGate } from '@groundwork/adapters';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { createAboutRoute } from './about.js';
 import { createAnswerRoute, defaultAnswerDeps } from './answer.js';
 import { MAX_ITERATIONS, TIME_BUDGET_MS, withTimeBudget } from './limits.js';
 import {
@@ -72,6 +73,10 @@ app.get('/api/stream/demo', (c) => {
     });
   });
 });
+
+// GET /api/about — Article 50 disclosure + capability profile. ADR-0012.
+// Public info; rides the shared rate-limit middleware.
+app.route('/api/about', createAboutRoute());
 
 // POST /api/answer — Sprint 2 shape (GW-10 + GW-11 landed).
 // Route is registered once; deps are built lazily on first request
