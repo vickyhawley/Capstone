@@ -226,9 +226,20 @@ gracefully to a catalogue-only retriever with an unused enum value.
 
 - GW-01 (ingestion) — implements this ADR's two-chunker design. The
   ADR must be signed off before that story starts.
-- ADR-0004 (query filters) — the retrieval-query-filters ADR listed
-  as a follow-up on ADR-0001 slides from the reserved-0003 slot to
-  0004. `document_type` is one of the filters it will define.
+- ADR-0004 (attribute extraction at ingest) — LLM extraction with
+  source-span grounding. Amends GW-01. The chunk metadata designed
+  here (handle / vendor / type / price range / local_delivery_only)
+  expands to include typed extracted attributes with confidence and
+  source spans once ADR-0004 lands.
+- ADR-0005 (substitute ranking) — decision only for Sprint 1, build
+  in GW-19 (Sprint 3). Constrains what chunk metadata must carry.
+- ADR-0006 (chunking strategy) — target size, overlap, hierarchical
+  parent chunk. GW-01 ingestion ships with tunable placeholder
+  parameters (guide chunker: target ~800 chars, overlap ~100 chars)
+  pending this ADR.
+- ADR-0007 (retrieval query filters) — content_type / active / brand /
+  `document_type` taxonomy and how those map onto ADR-0001's F2
+  strategy. `document_type` is introduced by this ADR (0003).
 - Fixture guides — GW-01 needs one or two prose guides to exercise
   the guide chunker end to end. Authored separately by the SME; a
   minimal fixture guide (e.g. "How to size a rug") is enough to

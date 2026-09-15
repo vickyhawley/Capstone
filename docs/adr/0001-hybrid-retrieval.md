@@ -334,15 +334,26 @@ that costs ~$0.20 at current scale.
 
 ## Follow-ups
 
-- ADR-0002: chunking strategy (target size, overlap, hierarchical parent
-  chunk).
+- ADR-0002: iteration-vs-timeout budget sizing (**already landed** — this
+  ADR's original follow-up list assumed 0002 was chunking strategy, but
+  0002 was taken by the iteration/timeout decision during Sprint 0 prep).
 - ADR-0003: **corpus composition** — two document types (product records
-  + prose guides). This slot was originally reserved for retrieval query
-  filters; that topic slides to ADR-0004.
-- ADR-0004: retrieval query filters — content_type / active / brand /
+  + prose guides). Landed 2026-09-14. Originally reserved for retrieval
+  query filters; that topic has slid down further, see below.
+- ADR-0004: attribute extraction at ingest — LLM extraction with
+  source-span grounding, typed schemas per product type, metafield
+  agreement rate as validation. Amends GW-01 acceptance criteria.
+- ADR-0005: substitute ranking — exact / substitute / complement
+  ordering for retrieval. Decision only for Sprint 1; build lands in
+  GW-19 (Sprint 3). Chunk metadata designed by ADR-0004 must carry the
+  fields substitute ranking will need.
+- ADR-0006: chunking strategy (target size, overlap, hierarchical parent
+  chunk). GW-01 ingestion ships with tunable placeholder parameters
+  pending this ADR.
+- ADR-0007: retrieval query filters — content_type / active / brand /
   document_type taxonomy and how they map onto the F2 strategy.
-- ADR-0005: fusion strategy addendum (if we deviate from the experiment
+- ADR-0008: fusion strategy addendum (if we deviate from the experiment
   winner).
-- ADR-0006: synonym dictionary / equine-domain lexeme mapping for
+- ADR-0009: synonym dictionary / equine-domain lexeme mapping for
   `to_tsvector`.
 - Addendum to this ADR: Sprint 1 fusion + rerank experiment outcome.

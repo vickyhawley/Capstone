@@ -147,6 +147,57 @@ creation. Documented in README; the URL is centralised in
 `scripts/smoke.mjs` so a future rename (or plan upgrade) is a
 three-file change, not a scavenger hunt.
 
+### Scope change — GW-01 amended for attribute extraction (2026-09-15)
+GW-01 ("corpus ingestion") is expanded, not split into a new story.
+The board stays at 37; the story now includes an LLM attribute-extraction
+pass at ingest. Recorded here rather than added silently so the amendment
+is visible.
+
+**Why.** A pre-handover profile of the 398-product catalogue found that
+the facts customers actually ask about (size, feeding rate, waterproof
+rating, ingredients) sit in prose but are largely absent from structured
+metafields — an Equidry Aura description states 20,000 mm waterproof
+rating and 32,000 g/m²/24hr breathability in the body, while the
+`outerwear-clothing-features` metafield is populated on only 5 of 398
+products. Retrieval alone can find those descriptions, but a bot cannot
+*filter* on "waterproof ≥ 15,000 mm" without the fact being addressable.
+Extraction at ingest turns prose facts into structured metadata a
+retriever and a downstream substitute-ranker can both use.
+
+**Amended acceptance criteria.**
+- Extraction coverage reported per attribute per product type,
+  before/after the catalogue-only baseline.
+- Agreement rate against populated Shopify metafields (109 colour
+  ground-truth products) reported and land in ADR-0004.
+- Zero stored attributes without a source span, enforced by a test.
+- Retrieval relevance on the golden set measured with and without
+  extracted attributes in the chunk. Negative result reported honestly
+  if the number doesn't move.
+
+**Delivery split as planned.** GW-01 stays one story but ships in two
+commits: (a) chunker library + attribute extractor + fixture guide +
+inline snapshot tests, then (b) `@supabase/supabase-js` + persistence
+to `documents`/`chunks` + ingestion runbook. Story closes when (b)
+lands. Logging the split now — the discovery of GW-09's "close-time
+surprise" pattern (the deploy defects that had to be caught in-flight)
+is the trigger for making delivery shape visible up front.
+
+**ADR renumbering.** Adding attribute extraction takes ADR-0004; the
+originally-planned chunking-strategy ADR slides to ADR-0006. Substitute
+ranking (introduced by the same brief as a Sprint 3 decision) takes
+ADR-0005. ADR-0001's follow-up list already reflects the new numbering.
+
+**Also carried by the brief.** ADR-0005 records substitute-ranking as
+a decision only for Sprint 1 — no build until GW-19 in Sprint 3 — so
+that the chunk metadata designed by ADR-0004 already carries the
+fields substitute ranking will need (product type, vendor, comparable
+attributes). Avoids a re-ingest at Sprint 3.
+
+**Failure mode to watch.** If extraction produces attributes that read
+as plausible but aren't grounded in the text, stop and surface it
+rather than tightening the prompt to look right. That failure mode is
+the whole reason for the source-span requirement.
+
 ### Didn't ship
 - (Nothing outstanding from this sprint prep.)
 
@@ -157,9 +208,14 @@ three-file change, not a scavenger hunt.
 ### Decisions / ADRs
 - ADR-0001 revised (filtered search, ts_rank, fusion grid, embedding
   commitment, migration cost).
+- ADR-0003 landed — corpus composition (two document types).
+- ADR-0004 in draft — attribute extraction at ingest.
+- ADR-0005 planned — substitute ranking (decision only, Sprint 3 build).
 
 ### Follow-ups carried
 - Real answer endpoint on the API so the harness can score more than
   "endpoint not implemented" — Sprint 1.
 - Real 40-case dataset (authored separately) — Sprint 1.
-- ADR-0002 through ADR-0005 as identified in ADR-0001 follow-ups.
+- ADR-0006 (chunking strategy), ADR-0007 (retrieval query filters),
+  ADR-0008 (fusion strategy addendum), ADR-0009 (synonym dictionary) —
+  Sprint 1+.
