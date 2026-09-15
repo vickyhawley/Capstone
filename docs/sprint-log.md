@@ -269,6 +269,53 @@ already shaped. If we skip it altogether, no cost — the archetype
 weights in the generator can be tuned to whatever a future ADR
 justifies.
 
+### Customer discovery signals (2026-09-15)
+
+Six signals shared by the shop owner around what customers value
+today and what they're pulling the shop toward. Recorded so
+Sprint 2+ planning has the context and the assistant's voice /
+scope decisions can lean on it. Detailed rationale lives in
+project memory (`project_nfcs_customer_signals.md`).
+
+**What customers value today (assistant must not erode):**
+
+1. **Rhinegold boots — try-on in shop.** Fit questions on
+   Rhinegold boots should route to "come in and try", not
+   online sizing. Do not attempt to size boots remotely on this
+   brand.
+2. **Sunday opening.** Concrete corpus fact —
+   `data/guides/opening-hours.md` added this sprint as the
+   canonical source. Placeholder hours need to be populated
+   before next ingest.
+3. **Technical products over clothing.** Competitors are moving
+   toward clothing; the shop's differentiator is technical depth.
+   ADR-0004's extraction (`waterproof_mm`, `breathability`,
+   `active_ingredients`, `feeding_rate`) is directly in service
+   of this positioning — the coverage report (`pnpm coverage`)
+   confirms the technical axes are where extraction earned its
+   cost.
+
+**What customers are asking for (Sprint 2+ candidates, not on
+the board):**
+
+4. **Pet foods & supplies (dog, cat).** Currently catalogue
+   Type `dog feed` has 1 product. Scope expansion signal — new
+   attribute schemas needed (probable: species, life_stage,
+   target_concern, pack_size_kg, form). No story yet; add when
+   the shop authorises the expansion.
+5. **High-end hat fitting (~£2,000 tier).** Hat fitting is a
+   *service*, not a product. Assistant should escalate "which
+   hat fits me?" to booking a fitting, not answer sizing
+   online. Case-shape for the golden dataset: escalate under
+   `welfare-clinical`-adjacent tag, or a new `service-referral`
+   category. Flag when the SME authors golden cases.
+6. **Basics tier alongside the premium.** Customers want
+   access to a lower-priced entry point too. This is a
+   price-tier dimension of substitute ranking — reinforces
+   ADR-0005. Also introduces a new golden-dataset category
+   `price-tier-substitute`, noted in `evals/datasets/README.md`
+   §3 this sprint.
+
 ### Didn't ship
 - (Nothing outstanding from this sprint prep.)
 

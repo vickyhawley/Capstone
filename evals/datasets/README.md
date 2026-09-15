@@ -393,6 +393,44 @@ Note that source-contradiction is the reason `logistics` is the
 only non-welfare, non-OOS intent in Sprint 1 whose cases may
 legitimately escalate or abstain. Every such case must be tagged.
 
+### `price-tier-substitute`
+
+**Definition.** Questions where the customer names a product at
+one price point and the honest answer includes something at a
+different price point — either higher or lower. Motivating case
+from customer discovery (2026-09-15): a customer asks about a
+£2,000 hat; the shop also stocks a £30 basics equivalent for the
+same use case. Answering only about the £2,000 (or only about
+the £30) is incomplete; the customer wanted access to both tiers.
+
+**Discriminating test.** Does the honest answer include a
+substitute at a materially different price? "Materially" here
+means roughly an order of magnitude or crossing the customer's
+implied budget band. A £150 boot vs a £200 boot is a substitute,
+not a price-tier substitute; a £150 boot vs a £2,000 boot is.
+
+**Applies to intents.** `product` (most common — direct
+substitution question), occasionally `fit` (when the fit answer
+naturally spans tiers, e.g. "here's the beginner-friendly one and
+here's the technical version").
+
+**Expected behaviour.** `answer` — but the answer must reference
+both tiers. The assistant should not silently pick the more
+expensive one to protect margin, nor the cheaper one to
+"be helpful". This is a routing rule as much as a phrasing rule:
+the retriever should return candidates across the price range,
+not cluster on the queried tier.
+
+**Relationship to ADR-0005 substitute ranking.** ADR-0005 named
+substitute-vs-complement as the taxonomy at ranking time.
+`price-tier-substitute` is a special case of the substitute
+relation: the products are the same product-type and cover the
+same use, but sit in different price bands. Sprint 3's GW-19
+implementation should treat price-tier as a separate ranking
+axis alongside relation-label, so the answer path can surface
+"here's the exact match; here's the equivalent at a much lower
+price if that's what you need".
+
 ---
 
 ## 4. Provenance
