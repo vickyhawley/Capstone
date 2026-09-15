@@ -20,7 +20,18 @@ import type { ChunkInput, DocumentInput, DocumentWithChunks } from './types.js';
 export interface PersistResult {
   readonly documentId: string;
   readonly chunkIds: readonly string[];
-  readonly action: 'inserted' | 'updated' | 'unchanged';
+  readonly action: 'inserted' | 'updated' | 'unchanged' | 'forced';
+}
+
+export interface PersistOptions {
+  /**
+   * Force chunk replacement even if the document's content_hash is
+   * unchanged. Use when chunk metadata has changed but chunk text has
+   * not — e.g. extracted attributes have been added on a subsequent
+   * run against an already-persisted document. Chunk IDs shift on a
+   * forced run.
+   */
+  readonly force?: boolean;
 }
 
 interface DocumentRow {
@@ -120,13 +131,17 @@ async function replaceChunks(
 export async function persistDocumentWithChunks(
   supabase: SupabaseClient,
   documentWithChunks: DocumentWithChunks,
+  options: PersistOptions = {},
 ): Promise<PersistResult> {
   const { document, chunks } = documentWithChunks;
   const { id, wasNew, hashChanged } = await upsertDocument(supabase, document);
-  if (!wasNew && !hashChanged) {
+  const shouldReplaceChunks = wasNew || hashChanged || options.force === true;
+  if (!shouldReplaceChunks) {
     // Existing document with matching content hash — skip chunk replacement.
     // The eval harness reads chunk IDs stably across runs; not touching
     // chunks when the content is unchanged keeps those references valid.
+    // Callers pass `{ force: true }` when chunk metadata has changed but
+    // text has not (e.g. extracted attributes added post-hoc).
     const { data: existingChunks, error } = await supabase
       .from('chunks')
       .select('id, ordinal')
@@ -142,9 +157,6 @@ export async function persistDocumentWithChunks(
     };
   }
   const chunkIds = await replaceChunks(supabase, id, chunks);
-  return {
-    documentId: id,
-    chunkIds,
-    action: wasNew ? 'inserted' : 'updated',
-  };
+  const action: PersistResult['action'] = wasNew ? 'inserted' : hashChanged ? 'updated' : 'forced';
+  return { documentId: id, chunkIds, action };
 }

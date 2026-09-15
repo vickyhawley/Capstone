@@ -237,6 +237,7 @@ function mergeAttributesIntoChunks(
 interface IngestReport {
   documentsInserted: number;
   documentsUpdated: number;
+  documentsForced: number;
   documentsUnchanged: number;
   productsExtracted: number;
   productsSkippedNoSchema: number;
@@ -252,6 +253,7 @@ function newReport(): IngestReport {
   return {
     documentsInserted: 0,
     documentsUpdated: 0,
+    documentsForced: 0,
     documentsUnchanged: 0,
     productsExtracted: 0,
     productsSkippedNoSchema: 0,
@@ -271,16 +273,32 @@ function tallyDrops(drops: readonly DroppedAttribute[], report: IngestReport): v
   }
 }
 
-function tallyAction(action: 'inserted' | 'updated' | 'unchanged', report: IngestReport): void {
+function tallyAction(
+  action: 'inserted' | 'updated' | 'unchanged' | 'forced',
+  report: IngestReport,
+): void {
   if (action === 'inserted') report.documentsInserted++;
   else if (action === 'updated') report.documentsUpdated++;
+  else if (action === 'forced') report.documentsForced++;
   else report.documentsUnchanged++;
+}
+
+// ---------- CLI args ----------
+
+function parseArgs(argv: readonly string[]): { force: boolean } {
+  return { force: argv.includes('--force') };
 }
 
 // ---------- Main ----------
 
 async function main(): Promise<void> {
   const env = readEnv();
+  const { force } = parseArgs(process.argv.slice(2));
+  const persistOptions = { force };
+
+  if (force) {
+    console.error('running with --force: chunk IDs may shift on unchanged documents.');
+  }
 
   const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
@@ -296,7 +314,7 @@ async function main(): Promise<void> {
     const markdown = readFileSync(resolve(GUIDES_DIR, guideFile), 'utf-8');
     const slug = parse(guideFile).name;
     const docWithChunks = chunkGuide({ markdown, slug });
-    const result = await persistDocumentWithChunks(supabase, docWithChunks);
+    const result = await persistDocumentWithChunks(supabase, docWithChunks, persistOptions);
     tallyAction(result.action, report);
   }
 
@@ -359,7 +377,7 @@ async function main(): Promise<void> {
       document: docWithChunks.document,
       chunks: mergedChunks,
     };
-    const result = await persistDocumentWithChunks(supabase, merged);
+    const result = await persistDocumentWithChunks(supabase, merged, persistOptions);
     tallyAction(result.action, report);
 
     if (productIndex % 25 === 0) {
@@ -378,6 +396,7 @@ async function main(): Promise<void> {
   console.log('Documents');
   console.log(`  inserted:              ${report.documentsInserted}`);
   console.log(`  updated:               ${report.documentsUpdated}`);
+  console.log(`  forced:                ${report.documentsForced}`);
   console.log(`  unchanged:             ${report.documentsUnchanged}`);
   console.log('');
   console.log('Attribute extraction');

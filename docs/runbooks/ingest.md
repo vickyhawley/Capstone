@@ -34,6 +34,19 @@ From the repo root:
 pnpm ingest
 ```
 
+To force a chunk-metadata refresh on documents whose text hasn't
+changed (e.g. re-running extraction after a first pass failed on
+API errors and left chunks without extracted attributes):
+
+```
+pnpm ingest -- --force
+```
+
+`--force` replaces chunks regardless of `content_hash`. Chunk IDs
+shift on `--force` runs, so avoid it if a golden dataset already
+references chunk IDs. Normal re-runs (idempotent, chunk IDs stable)
+should not use it.
+
 The command shells to `pnpm --filter @groundwork/ingestion ingest`,
 which runs `tsx --env-file=../../.env.local src/ingest-cli.ts`. The
 `--env-file` flag is Node's native dotenv loader (Node 22+); the CLI
