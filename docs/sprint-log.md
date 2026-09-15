@@ -579,3 +579,121 @@ Recorded at `docs/demos/sprint-1.md` per the handbook's
 Five minutes, screen recording, no polish: the deployed URL, the
 corpus loaded, a retrieval query running, the baseline report.
 See the demo doc for the script and the archived link.
+
+## Sprint 2 — planning (2026-09-15)
+
+### Goal
+Land the boundary machinery — router, safety gate, escalation,
+disclosure — so the golden dataset's welfare, adversarial, and
+service-referral cases have infrastructure to exercise them for
+real. Sprint 1 built the ground the project stands on; Sprint 2
+builds the walls that define what the system will and won't do.
+
+### The sequencing decision, made explicitly
+
+Sprint 1's close-out named nine follow-ups, all of them corpus or
+retrieval work. They're good and they're measurable — and they are
+**not** what Sprint 2 is for. Sprint 2 is GW-10 to GW-17, the
+boundaries. That's where the project thesis lives: *"the system
+knows the difference between what it knows, what it can find out,
+and what it must not answer"*. The dataset has four welfare cases,
+eight adversarial cases, three distinct escalation paths (clinical,
+service-referral, order-state), and a fit false-refusal
+counterweight — none of which anything currently exercises. They
+were authored to test behaviour that doesn't exist yet.
+
+So: **the boundaries are the spine of Sprint 2. Retrieval follow-ups
+fit around them where there's room.** Recording that as a decision
+rather than drift, so the ordering is auditable.
+
+One exception. The embedding fold-in comes first regardless. It's
+small, it prevents recurrence of the GW-01 gap that already cost a
+story, and every subsequent ingest depends on it.
+
+### Stories in order
+
+| # | Story | Kind | Notes |
+| ---: | --- | --- | --- |
+| 1 | Embedding fold-in | Sprint 1 carry-over | Fold OpenAI embedding into `pnpm ingest` alongside attribute extraction. Prevents `chunks.embedding = NULL` regression. Estimated ~half a day; blocks nothing but must land before any corpus refresh. |
+| 2 | **GW-10 intent router** | Sprint 2 boundary | Classifies query → one of six intents (product / fit / logistics / welfare-clinical / out-of-scope / service-referral). Returns intent + confidence. Small fast model per ADR-0001's model-tiering reasoning. Runs on every turn. |
+| 3 | **GW-11 safety gate** | Sprint 2 boundary | Uses the router's output. Consumes `expected_behavior` semantics — welfare-clinical always escalates, out-of-scope always abstains, service-referral escalates. Low-confidence route defers to safety-side default. Also the enforcement point for the ADR-0004 "no clinical language" prohibition. |
+| 4 | **GW-12 escalation UI + content** | Sprint 2 boundary | The three escalation shapes need distinct copy: clinical → route to vet; service-referral → book with staff; order-state → "staff can tell you". Welfare copy is the important one; wrong words here still fail the case even if the router routed correctly. |
+| 5 | **GW-13 false-refusal measurement** | Sprint 2 boundary | Adds `false_refusal` to the eval harness's active-metrics set for answer cases the router might over-classify as welfare. Fit case 026 (wide-backed cob) is the canonical target — no symptoms, must not escalate. |
+| 6 | **GW-14 red-team set wired to tier 3** | Sprint 2 boundary | The eight adversarial cases (prompt injection, role-play, jailbreak, etc.) exercised end-to-end against the safety gate. Tier 3 = production LLM path, not stub. |
+| 7 | **GW-15 Article 50 disclosure + capability profile** | Sprint 2 boundary | EU AI Act Article 50 — user disclosure that they're interacting with AI. Capability profile = the "what this bot can and can't do" statement, matched to what the system actually does. Compliance-shaped work with a specific artefact. |
+| 8 | **GW-17 golden set expansion** | Sprint 2 boundary | Per ADR-0005, four cases per product type covering exact / substitute-held / orderable / genuinely-unavailable. Coordinated with SME. Adds ~20 cases; grid re-reconciles at 60. |
+| 9 | Sparse fix + hybrid rematch | Sprint 1 carry-over | Replace `plainto_tsquery` with `websearch_to_tsquery` (or OR-fallback in the RPC). Rerun `pnpm retrieve`, populate the second row of the four-sprint baseline table with the actual hybrid comparison. Fits if there's room. |
+| 10 | Reranker spike | Sprint 1 carry-over | Dense-only vs +Cohere Rerank v3 vs +bge-reranker-base. Already default-slotted for Sprint 3 in ADR-0001's addendum. Sprint 2 pickup would be an unexpected win. |
+
+**GW-16 conversation memory — deferred to Sprint 3 explicitly.**
+Multi-turn state within a conversation depends on a multi-turn
+golden dataset, and README §6.6 already scopes Sprint 1 as
+single-turn with multi-turn deferred to a different dataset shape.
+GW-16 carries its own authoring work and belongs alongside it, not
+hidden inside a boundary story that would silently widen scope.
+Recorded in the Sprint 3 candidates list at the end of this plan
+so it's tracked rather than dropped.
+
+### What defers to Sprint 3 if the sprint runs short
+
+Deciding now, while it's cheap, rather than under pressure in week
+seven. Cuts happen from the top of this list first (i.e. reranker
+goes first, GW-14 goes last):
+
+1. **Reranker spike** — already Sprint 3 by default.
+2. **GW-17 golden set expansion** — 40 cases is a graded first exam.
+   Doubling to 60 is quality-of-life, not correctness.
+3. **Sparse fix + hybrid rematch** — retrieval works well enough
+   (dense at 94.4% recall@10) to not block boundary work; the actual
+   hybrid comparison would still be worth having but is a
+   quality-of-life item alongside GW-17.
+4. **GW-14 red-team wiring — cut last.** The eight adversarial
+   cases were authored specifically to test the safety gate. "The
+   adversarial slice was not measured end-to-end" is a weak
+   sentence in a design document that leans on safety. Sixty cases
+   that aren't adversarially tested is worse than forty that are.
+   Defer GW-14 only after everything above it has already been cut.
+
+The **non-negotiable core** (must ship or Sprint 2 has failed its
+thesis):
+
+- Embedding fold-in
+- GW-10 (router)
+- GW-11 (safety gate)
+- GW-12 (escalation content, especially welfare copy)
+- GW-13 (false-refusal measurement)
+
+Without those five, the boundary claim is unsubstantiated. Everything
+above them in the list is defence-in-depth.
+
+### What Sprint 2 does NOT do
+
+- Saddle-fitting or girth-fitting guides. Those close the fit gap
+  ADR-0003 named, but they belong to the retrieval work stream and
+  wouldn't get an honest measurement in Sprint 2 (no rerun budget
+  after the sprint's boundary work).
+- Case ID population past what GW-17 adds. Sprint 3 candidate.
+- Substitute-ranking (ADR-0005 GW-19). That's Sprint 3 build.
+
+### Sprint 3 candidates (recorded here so nothing falls off the board)
+
+- **GW-16 conversation memory** — deferred from Sprint 2. Includes
+  multi-turn golden-case authoring since single-turn cases can't
+  exercise it. Depends on a `evals/datasets/sprint-3/` (or similar)
+  with a multi-turn dataset shape per README §6.6.
+- **GW-19 substitute ranking build** — ADR-0005's decision-only
+  Sprint 1 call. Chunk metadata already carries what the build needs
+  (product type, vendor, comparable attributes, price band).
+- Anything from the deferral order above that got cut mid-Sprint 2.
+
+### Follow-ups already carried into this planning
+
+- ADR-0006 (chunking strategy) — still open; no forcing story in
+  Sprint 2, so it slips to whenever the chunker's default parameters
+  become the bottleneck.
+- ADR-0007 (retrieval query filters) — depends on GW-10's intent
+  labels being ready, so Sprint 3 candidate.
+- ADR-0008 (fusion strategy addendum) — Sprint 3, after the sparse
+  fix + hybrid rematch actually runs.
+- ADR-0009 (synonym dictionary) — Sprint 3+, with a specific
+  measurement on case 007 as the gating criterion.
