@@ -696,6 +696,27 @@ above them in the list is defence-in-depth.
   for the finding and the general rule ("any field a downstream
   consumer will threshold on gets a calibration check before the
   consumer is written").
+- **Case 006 — OOS-boundary hardening.** The router's out-of-scope
+  boundary is soft on messages that use commerce vocabulary in an
+  OOS shape ("do you sell / do you stock <thing we don't sell>").
+  Case 006 (`oos-006-devon-haylage-intent`) is the canonical target:
+  a commerce-shaped question about a product NFCS deliberately
+  doesn't stock, misclassified as `product` under the current
+  router. Addressable at the golden-set boundary (more OOS boundary
+  probes with commerce vocabulary), at the rules layer (a "brands
+  we deliberately don't stock" rule keyed on the ADR-0004 list), or
+  at the LLM-prompt layer (a stronger example of the commerce-vocab-
+  in-OOS-shape distinction). Priority: low — this is a false-positive
+  toward `product` that GW-11 has to catch downstream anyway. GW-11
+  design must not assume the router filters it out.
+- **Case 015 — under-specification / clarification path.** Case 015
+  (`logistics-015-notice-required`) is misclassified as
+  `out-of-scope` because the user's message is under-specified —
+  it names no product, no timeline, no location. GW-16 (conversation
+  memory) is the natural home: the correct behaviour is a
+  clarification question, not a classification. Named as the
+  canonical GW-16 target so the Sprint 3 GW-16 authoring has a
+  concrete case to satisfy.
 - Anything from the deferral order above that got cut mid-Sprint 2.
 
 ### Follow-ups already carried into this planning
@@ -709,3 +730,108 @@ above them in the list is defence-in-depth.
   fix + hybrid rematch actually runs.
 - ADR-0009 (synonym dictionary) — Sprint 3+, with a specific
   measurement on case 007 as the gating criterion.
+
+## Sprint 2 — in progress (running log)
+
+### GW-10 close-out (2026-09-15)
+
+**Story:** Intent router — classifies every incoming query into one
+of six intents (product / fit / logistics / welfare-clinical /
+out-of-scope / service-referral), so downstream stories (GW-11 safety
+gate, GW-12 escalation, retrieval-side filtering per ADR-0007) have
+a stable dispatch key.
+
+**As-measured result — 38/40 = 95.0%.**
+
+| axis | value |
+| --- | --- |
+| overall accuracy (golden 40) | 38/40 = 95.0% |
+| per-intent recall | fit 5/5, product 12/12, welfare-clinical 4/4, service-referral 1/1, logistics 11/12, out-of-scope 5/6 |
+| adversarial detection (expected set: 030, 036, 037, 038) | 4/4 |
+| adversarial false positives (remaining 36 cases) | 0 |
+| watched fit cases (026, 027, 032, 033) | 4/4 |
+| known misses | 006 (OOS→product), 015 (logistics→OOS) |
+| Sprint 2 gate (`intent_classification_accuracy` ≥ 0.85) | passes (0.95) |
+
+Both measurements match: the standalone router-baseline
+(`packages/retrieval-experiment/src/router-baseline.ts`) and the
+end-to-end harness run against a live `/api/answer`
+(`evals/results/sprint-2/20260915T214445Z.json`) return 38/40 with
+the same two cases misclassified.
+
+**What shipped**
+
+- `packages/core/src/ports/router.ts` — `Router` port + `RouterDecision`
+  shape.
+- `packages/adapters/src/router/` — rules (safety-signal + intent-
+  shortcut, split per ADR-0010 amendment 1), LLM classifier,
+  hybrid router, stub for tests.
+- `apps/api/src/answer.ts` — `POST /api/answer` running the router,
+  returning the Sprint 2 shape (intent + adversarial signal
+  populated; answer/citations/chunk_ids left empty pending GW-11).
+- `evals/groundwork_evals/` — `ApiResponse` extended with the router
+  fields, `intent_classification_accuracy` metric, per-intent
+  breakdown in the runner output, `thresholds/sprint-2.json` gating
+  the metric at 0.85.
+- Commits: `35b2236` (router core), `86b1d58` (pre-amendment
+  baseline), `d2c30f6` (ADR-0010 amendments 1+2), `e8962e3`
+  (harness wiring).
+
+**Amendments to ADR-0010 that landed mid-story**
+
+1. **`RouterDecision` gained `adversarialSuspected` +
+   `adversarialPattern`.** The original shape forced adversarial-in-
+   legitimate messages (case 030: a fit query carrying an injection
+   payload) into a single-classification decision. The amended shape
+   lets the LLM find the underlying intent while the rules layer
+   captures the injection signal separately.
+2. **`confidence` field falsified.** All 40 baseline cases returned
+   ≥0.90; both misses returned 0.90. No threshold on the field
+   distinguishes correct from incorrect predictions. Field kept in
+   the interface with a code-comment marking it non-load-bearing;
+   GW-11 will design without deferral on it. Full write-up in
+   `docs/ai-assisted-development.md`, and the general rule ("any
+   field a downstream consumer will threshold on gets a calibration
+   check before the consumer is written") sits alongside the GW-01
+   "reporting verifies reporting" lesson.
+
+**Explicitly deferred (ADR-0010 Decision 3)**
+
+Cases 006 and 015 were named in ADR-0010 as measurable-but-not-
+chased under the Sprint 2 GW-10 story. Both are now written up as
+Sprint 3 candidates above with specific homes (case 006 → OOS-
+boundary hardening, case 015 → GW-16 conversation memory /
+clarification path). Neither is a router bug in isolation; both are
+"correct classification requires structure the current shape can't
+represent" cases.
+
+**What this unblocks next**
+
+- **GW-11 (safety gate)** — reads `RouterDecision`. Welfare-clinical
+  always escalates, out-of-scope always abstains, service-referral
+  escalates; `adversarialSuspected: true` forces safety-side
+  handling regardless of intent (this is the amended-shape point:
+  a fit query with an injection payload cannot get a fit answer).
+  Does not depend on `confidence`.
+- **GW-12 (escalation content)** — two of the three escalation
+  shapes are now first-class in the router output: welfare-clinical
+  has its own intent, service-referral has its own intent. The
+  third shape (order-state escalations — "when will my order
+  arrive") sits inside the `logistics` bucket and needs a secondary
+  signal that GW-11 or GW-12 will have to provide; the router does
+  not distinguish it. Honest scope note so GW-12 doesn't inherit
+  a false assumption from this close-out.
+- **GW-13 (false-refusal measurement)** — the false-refusal metric
+  is already in the harness (`false_refusal`, applicable on
+  answer-behavior cases); wiring it into a Sprint 2 threshold is a
+  GW-13 concern once GW-11 changes the answer/refusal ratio.
+- **ADR-0007 (retrieval query filters)** — has a stable intent
+  label to filter on. Still Sprint 3 by the current plan.
+
+**Dev-loop gotcha caught in this story**
+
+`tsx --env-file=X watch src/dev.ts` fails — tsx reads `watch` as the
+entrypoint. Correct order is `tsx watch --env-file=X src/dev.ts`
+(subcommand first). Fix in `apps/api/package.json`. Same pattern
+already correct in the ingestion + retrieval-experiment scripts,
+which is where the correct-order example was copied from.
