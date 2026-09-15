@@ -257,3 +257,82 @@ first item — folding embedding generation into `pnpm ingest` so a
 fresh corpus refresh cannot ship with NULL embeddings again. The
 consumer (retrieval) will verify the producer (ingest) on every
 future run because it always has to read the column.
+
+### Sprint 2 — 2026-09-15 — GW-10 router confidence falsified
+
+Second instance of the same failure family. Recording it here
+alongside GW-01 so the pattern is visible as a *class* of thing,
+not just as two coincidences.
+
+- **The assumption** — ADR-0010 specified `confidence` as an output
+  of the router and assumed the safety gate (GW-11) could threshold
+  on it for deferral of uncertain classifications. The LLM
+  classifier's structured-output schema included a `confidence:
+  number` field; the classifier was told to emit "your honest
+  estimate 0..1 that the classification is correct." Nothing about
+  this looked wrong until the field was measured.
+- **The measurement** — the GW-10 pre-tuning baseline ran the
+  classifier against all 40 golden cases. Every one returned a
+  confidence value at or above 0.90. The LLM's contribution was
+  uniformly 0.90 across all 34 cases it classified — including
+  both of its two misclassifications. Rule-driven cases returned
+  1.00 by construction. The four confidence bands collapsed into a
+  single bucket [0.90, 1.00] at n=40. No threshold on this field
+  distinguishes correct from incorrect predictions.
+- **What the field actually was** — a number the LLM generated
+  because the schema asked for one. Not a probability. Not
+  calibrated. Not a signal. The model has no mechanism for
+  "estimating its own correctness" on a classification it just
+  emitted; asking it to produce that number produces a plausible
+  digit, not an estimate.
+- **Consequence** — GW-11 designs without confidence-gated
+  deferral. Calibrated confidence (top-token log-probability,
+  self-consistency across N samples, a calibration head) moves to
+  the Sprint 3 candidate list. The `confidence` field stays in the
+  RouterDecision interface with a code comment naming it as not
+  load-bearing — removing it would churn every downstream reader
+  for a Sprint 3 re-add.
+
+#### Failure family
+
+This is the same shape as GW-01's "297 attributes stored across
+120 documents" report while every `chunks.embedding` was NULL:
+
+- **GW-01** — the ingest report claimed a count the extractor
+  actually computed. The count was correct. What was missing was
+  a separate step (embedding) that no reporting field in the
+  pipeline had a way to notice was absent.
+- **GW-10** — the classifier emitted a confidence value the model
+  actually generated. The value was returned. What was missing was
+  any mechanism inside the model that would make the value
+  correspond to something outside itself.
+
+Both are **plausible outputs that carry no underlying signal**.
+Both look right at the interface layer. Both fail only when a
+downstream consumer treats the output as load-bearing and finds
+that the number carries no information about the thing it seems
+to describe.
+
+The GW-01 lesson was *"reporting verifies reporting"*. The GW-10
+lesson is stricter: *a model that generates a number when asked
+for one is not the same thing as a model that measures*. Both
+share the general shape: **an artefact of the pipeline's shape
+is not the same as evidence about the pipeline's behaviour**.
+The fix is the same in both cases — measure the field against
+what it claims to describe before building anything on top of it.
+
+#### Rule that follows
+
+Any field a downstream consumer will threshold on gets a
+calibration check before the consumer is written. For a numeric
+field, that means: plot the field against ground-truth accuracy
+across the dev set, and verify the correlation is monotone and
+non-trivial. If accuracy is flat across the field's range, the
+field carries no information and the consumer must not depend on
+it. This applies as strongly to model-generated fields (`confidence`,
+`likelihood`, `probability`) as to system-generated fields
+(retrieval scores, rerank scores).
+
+The check is cheap. Skipping it is what let GW-01 ship with NULL
+embeddings and what would have let GW-11 ship with a confidence
+threshold that gated nothing.

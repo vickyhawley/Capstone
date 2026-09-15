@@ -14,6 +14,7 @@ export class StubRouter implements Router {
       confidence: 1.0,
       rationale: 'stub',
       matched: 'rule',
+      adversarialSuspected: false,
     };
   }
 }

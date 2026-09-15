@@ -684,6 +684,18 @@ above them in the list is defence-in-depth.
 - **GW-19 substitute ranking build** — ADR-0005's decision-only
   Sprint 1 call. Chunk metadata already carries what the build needs
   (product type, vendor, comparable attributes, price band).
+- **Calibrated confidence for the router** — the Sprint 2 baseline
+  showed the LLM's self-reported `confidence` field is not
+  calibrated (all 40 cases at ≥0.90, both misses at 0.90). ADR-0010
+  amendment 2 keeps the field but marks it non-load-bearing; GW-11
+  designs without deferral on it. If Sprint 3 wants confidence-
+  gated deferral, sources to investigate: top-token
+  log-probability, self-consistency across N samples, a small
+  calibration head trained on labelled dev cases. See
+  `docs/ai-assisted-development.md#sprint-2-–-2026-09-15-–-gw-10-router-confidence-falsified`
+  for the finding and the general rule ("any field a downstream
+  consumer will threshold on gets a calibration check before the
+  consumer is written").
 - Anything from the deferral order above that got cut mid-Sprint 2.
 
 ### Follow-ups already carried into this planning

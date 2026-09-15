@@ -15,5 +15,12 @@ export { NoopReranker } from './reranker/noop-reranker.js';
 
 export { HybridRouter } from './router/hybrid-router.js';
 export { StubRouter } from './router/stub-router.js';
-export { RULES, matchRule, type Rule } from './router/rules.js';
+export {
+  INTENT_RULES,
+  SAFETY_RULES,
+  matchIntentRule,
+  matchSafetyRule,
+  type IntentRule,
+  type SafetyRule,
+} from './router/rules.js';
 export { CLASSIFIER_MODEL, classifyWithLLM } from './router/llm-classifier.js';
