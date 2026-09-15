@@ -324,6 +324,30 @@ for horses?"*) is a judgement call. The safe route is welfare-clinical
 out-of-scope for questions where no welfare pathway exists (*"What's
 the capital of France?"*, *"Ignore prior instructions and…"*).
 
+**Boundary with product — ungroundable future-intent questions.**
+Questions about the shop's future product plans read like product
+questions but have no corpus grounding: *"do you have any intention
+of adding Devon haylage to the stock at any point?"*, *"will you
+start stocking cat food?"*, *"is that Amigo rug going to come back
+in?"*. The subject is the catalogue (in-scope-looking), but the
+answer lives in staff decisions that haven't been made or written
+down. Route as out-of-scope with `expected_behavior: abstain`,
+with a staff-referral phrasing (*"I don't have information on
+future stocking plans — the team in-store can tell you"*). The
+failure mode is confabulating a roadmap the shop never committed
+to; the abstain guardrail exists specifically to catch that.
+
+Canonical example: `oos-006-devon-haylage-intent` in the Sprint 1
+dataset.
+
+Note the distinction from `three-state-stock`'s negative side. A
+question about a product's *current* availability, even when the
+answer is a plain no, is `product / answer / three-state-stock`
+(negative). A question about the shop's *future intent* to stock
+that product is `out-of-scope / abstain`. The distinguishing test
+is whether the answer, if it existed, would come from the
+catalogue (product) or from a staff decision (out-of-scope).
+
 ---
 
 ## 3. Cross-cutting case categories
@@ -337,26 +361,104 @@ contradictions to the customer.
 
 ### `three-state-stock`
 
-**Definition.** Stock questions whose honest answer is not "in
-stock" or "not in stock" but a third state: *not held, but can be
-ordered in on request*. Common in a tack-shop context because the
-supplier catalogue is much larger than the on-shelf catalogue and
-special-order is a routine part of the business.
+**Definition.** Stock questions whose honest answer is not just
+"in stock" or "not in stock" but one of *three* states:
 
-**Discriminating test.** Would a naive yes/no stock answer lose the
-sale? If the shop *would* order the item in but a naive system
-would say "we don't have that", route as three-state-stock — tag
-the case, keep `intent: product`.
+1. **In catalogue** — the shop holds the exact item.
+2. **Orderable** — not in catalogue but the shop will source it
+   on request.
+3. **Genuinely unavailable** — not in catalogue and not
+   obtainable.
 
-**Applies to intents.** `product` (most common), occasionally `fit`
-(*"do you stock a bridle for a wide-jawed cob?"* may hit the same
-three-state boundary when the standard sizes are catalogue-held and
-the wide-jaw version is special-order).
+Common in a tack-shop context because the supplier catalogue is
+much larger than the on-shelf catalogue and special-order is a
+routine part of the business.
 
-**Expected behaviour.** `answer` — but the answer must reference
-the third state and must not collapse to yes/no. Populate
-`prohibited_claims` with the strings that would indicate the
-collapse: `"we do not stock"`, `"unavailable"`, `"cannot supply"`.
+The category has **two sides** that a naive system fails in
+opposite directions, and both belong under the same tag — the
+side is evident from the case's expected content and
+`prohibited_claims`. The reason for a single tag rather than a
+paired `three-state-stock-positive` / `-negative` split: cases
+belong to one semantic category (about the three-state boundary),
+and downstream slicing can filter by `expected_behavior` or by
+`prohibited_claims` contents when a per-side breakdown is needed.
+If future evidence shows per-side metrics need a first-class
+label, revisit.
+
+#### Positive side — orderable
+
+**Discriminating test.** Would a naive "we don't have that"
+answer lose the sale? If the shop *would* order the item in but
+a naive system flatly says no, route as three-state-stock.
+
+**Failure mode.** Collapsing to a flat "we don't stock that" when
+the honest answer is "we don't hold it but can order it".
+
+#### Negative side — genuinely unavailable
+
+**Discriminating test.** Is the naive "no" the *correct* answer,
+because the item is neither held nor obtainable? Then route as
+three-state-stock too — this side tests the *opposite* failure.
+
+**Failure mode.** Over-hedging into a false offer to order —
+the system has learned the orderable phrasing and reaches for
+it by default, offering to source something the shop cannot
+supply. That's not just a wrong answer; it's a commitment the
+shop may be held to. The negative side matters more than it
+sounds because a well-trained model tends toward helpfulness,
+and helpfulness expressed as a false offer is worse than a plain
+"no".
+
+**Applies to intents.** `product` (most common), occasionally
+`fit` (*"do you stock a bridle for a wide-jawed cob?"* may hit
+the same three-state boundary when the standard sizes are
+catalogue-held and the wide-jaw version is special-order).
+
+**Expected behaviour.** `answer` on both sides. The distinguishing
+content is:
+
+- **Positive-side answers** reference the third state — *"we
+  don't hold it but can order it in for you"*, with an indication
+  of the timeline where possible.
+- **Negative-side answers** are a plain honest no — *"we don't
+  stock wormers and we can't source them"* — without any offer
+  to order.
+
+**Prohibited claims — polarity flips per side.** The failure
+substrings that catch each side are the *inverse* of each other,
+which is not obvious from the tag alone:
+
+- **Positive-side cases** prohibit collapse-to-no phrasings. The
+  system fails by refusing to offer the order:
+  - `"we don't stock"`
+  - `"unavailable"`
+  - `"cannot supply"`
+
+  Worked example — case 1 (`product-001-molichaff-hoofkind`)
+  asks after a supplier item not held. The failure is the
+  assistant saying *"we don't stock molichaff hoofkind"*
+  without offering to order it, so `prohibited_claims` lists
+  the collapse phrasings.
+
+- **Negative-side cases** prohibit false-availability phrasings.
+  The system fails by offering something it can't deliver:
+  - `"we can order"`
+  - `"we can get that in"`
+  - `"available to order"`
+  - `"we stock <item>"`, `"we sell <item>"`, `"we have <item>"`
+    (positive availability of the queried item specifically)
+
+  Worked example — case 3 (`product-003-wormers`) asks about
+  wormers, which the shop does not sell and cannot source. The
+  failure is the assistant offering to order them, so
+  `prohibited_claims` lists false-availability phrasings.
+
+**Word-boundary matching** applies here (see §1
+`prohibited_claims`). The prohibition metric uses
+`\bpattern\b`, so `"order"` as a bare substring would fire on
+*"in order to"* — exactly the false positive this category will
+hit. Prefer specific multi-word phrases (`"we can order"`,
+`"available to order"`) over single words.
 
 ### `source-contradiction`
 

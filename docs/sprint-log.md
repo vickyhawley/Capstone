@@ -316,6 +316,53 @@ the board):**
    `price-tier-substitute`, noted in `evals/datasets/README.md`
    §3 this sprint.
 
+### Spec corrections found while authoring the first 10 cases (2026-09-15)
+
+Three definitions in `evals/datasets/README.md` were too narrow to
+describe the shape of real customer questions. Surfaced by writing
+real cases against the doc; fixed before the next batch of authoring
+so 30 more cases don't land against the wrong definitions. The
+provenance matters: these came out of writing real cases, which is
+evidence the authoring process works — the doc is a spec, and
+authoring is how you catch spec bugs.
+
+Fixes landed in the same commit as this entry:
+
+- **`three-state-stock` covers both sides of the boundary.** The
+  original discriminating test ("would a naive yes/no lose the
+  sale?") only described the orderable side. Cases 3 (wormers) and
+  8 (electric fencing) are the *negative* side: not held AND not
+  obtainable. The naive "no" is correct; the failure mode is the
+  opposite — the system over-hedging into a false offer to order.
+  That side matters more than it sounds because a well-trained
+  system reaches for the orderable phrasing by default, and
+  offering to order something the shop can't get is a commitment
+  the shop may be held to. Both sides now have their own
+  discriminating test; single tag retained (rationale documented
+  in the tag).
+- **`prohibited_claims` polarity flips within the tag.** The doc
+  listed collapse-to-no strings as the default. For negative-side
+  cases those strings are the *correct* answer, so an author
+  following the doc literally would populate strings that make a
+  passing case impossible. Worked examples for both polarities
+  added, with a word-boundary reminder (`"order"` alone would fire
+  on *"in order to"*).
+- **Ungroundable future-intent belongs in `out-of-scope`.** Case 6
+  ("do you have any intention of adding Devon haylage") reads as a
+  product question but has no corpus grounding — the answer lives
+  in a staff decision that hasn't been made or written down. The
+  original OOS boundary paragraphs emphasised *"about us as a
+  business"* (staff pay, financials) and didn't name this shape.
+  New paragraph added covering future-intent-about-products with
+  case 6 as the canonical example, plus an explicit distinction
+  from `three-state-stock`'s negative side (which is about
+  *current* availability, not future intent).
+
+Ten existing cases re-validated against the loader after the fixes —
+no regressions. Cases weren't re-tagged; the tags were already
+correct against the SME's intent, only the definitions needed to
+catch up.
+
 ### Didn't ship
 - (Nothing outstanding from this sprint prep.)
 
