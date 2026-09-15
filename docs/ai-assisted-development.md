@@ -165,3 +165,95 @@ Three habits, in order of value:
    handler signatures, supported Node versions, and Marketplace env
    var conventions were not read. Library docs assume a generic
    target; platform docs describe the actual one.
+
+### Sprint 1 — 2026-09-15 — GW-01 embedding gap
+
+The strongest instance of the Sprint 0 lesson yet, and the same
+structural shape one layer deeper. There, plausible library
+defaults produced code that failed against the real deployment
+target. Here, a pipeline reported success while producing nothing
+usable — every gate was green, and every embedding was NULL.
+
+The single generalisation worth writing down: **a component is only
+verified by something downstream that consumes its output for real.
+Tests that exercise a pipeline's own reporting verify the reporting,
+not the pipeline.** Same lesson as Sprint 0, one abstraction level
+in.
+
+#### Failure — chunk embeddings never generated
+
+- **Asserted** — GW-01's amended acceptance criteria listed
+  *"retrieval relevance measured with and without extracted
+  attributes on the golden set."* The ingest pipeline in
+  `packages/ingestion/src/ingest-cli.ts` was assembled to satisfy
+  that: chunker → attribute extractor → persist. Every test passed;
+  the ingest run reported "297 attributes stored across 120
+  products", the ADR-0004 addendum was written, the story was
+  closed as `030dd0b`.
+- **True** — The pipeline called OpenAI for **attribute extraction
+  only**. The embedder was never wired in. Migration 001's
+  `chunks.embedding vector(1536)` column and its HNSW index both
+  existed on the table (which is what the schema tests checked) but
+  the column was NULL on every one of the 417 chunks. Retrieval
+  relevance on the golden set was structurally impossible: dense
+  retrieval had nothing to search.
+- **Found by** — GW-02's first experiment run. `pnpm retrieve`
+  reported dense at 0.0% recall on all 18 populated-source cases
+  and no errors. Debugging revealed the dense RPC's
+  `WHERE embedding IS NOT NULL` clause was filtering out every
+  chunk, because there were 417 chunks and 417 NULLs.
+- **Locally detectable?** — No, and this is the part worth
+  understanding. Nothing in the following was inconsistent:
+  - **39 tests passed.** They exercised the chunker's composition,
+    the extractor's source-span validation, the persistence
+    layer's insert path, the CLI's env-var handling. None of them
+    consumed the `embedding` column for read.
+  - **Typecheck, lint, core-purity all clean.** They check what
+    the code says, not what it does at runtime against Supabase.
+  - **The ingest report claimed "297 attributes stored".** The
+    report was a confident count of what the extractor *did* —
+    correct. Nothing in the reporter's design checked what the
+    extractor *should also have done* (call the embedder). The
+    reporter is loyal to the code, not to the acceptance criteria.
+  - **The `metadata` was correct.** The extracted-attributes JSON
+    landed in `chunks.metadata` exactly as designed. That's what
+    the coverage tool (`pnpm coverage`) measured. The chunk text
+    was correct. The `document` join was correct.
+
+  A downstream consumer that actually needed to read the embedding
+  was the first thing that noticed. Every earlier gate was
+  internally consistent with a pipeline whose specification differed
+  from what GW-01's acceptance criteria required.
+
+#### Meta-observation — reporting verifies reporting
+
+The Sprint 0 lesson was *"internal consistency is not external
+correctness"*. This is the same lesson, sharper: **a pipeline that
+reports on its own outputs will not surface a gap between what it
+does and what it was supposed to do**. The ingest report knew about
+attribute extraction because the extractor ran; it knew nothing
+about embeddings because nothing about embeddings was in the
+pipeline the report described.
+
+Two operational rules follow, and both apply to any pipeline the
+project ships from now on:
+
+1. **Acceptance criteria that name a downstream metric require a
+   test that runs the metric against a real read.** GW-01's
+   "retrieval relevance measured on the golden set" required an
+   actual retrieval query hitting an actual Supabase read of the
+   embedding column. Any check short of that verifies the
+   reporting, not the pipeline.
+2. **When a component is only used by another component that
+   hasn't been built yet, the story that builds the consumer is
+   the story that verifies the producer.** GW-02 (retrieval)
+   is the first thing that read `chunks.embedding` for real; GW-02
+   is what caught GW-01's gap. Story ordering that ships producers
+   ahead of consumers must plan for producer-verification to slip
+   into the consumer's story — because it will.
+
+The Sprint 2 backlog now has an ingest-embedding fold-in as its
+first item — folding embedding generation into `pnpm ingest` so a
+fresh corpus refresh cannot ship with NULL embeddings again. The
+consumer (retrieval) will verify the producer (ingest) on every
+future run because it always has to read the column.

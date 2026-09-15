@@ -363,6 +363,54 @@ no regressions. Cases weren't re-tagged; the tags were already
 correct against the SME's intent, only the definitions needed to
 catch up.
 
+### Correction — GW-01 was closed prematurely (2026-09-15)
+
+Not relitigating the close; recording that the GW-02 baseline
+exposed a gap in a story already marked done, and what fixed it.
+The story sequence — closed, exposed, corrected — is better
+evidence of process than a card that looked clean.
+
+**What was closed.** GW-01 shipped as `d2a8ac1` (chunkers +
+extractor) and `030dd0b` (persistence + OpenAI wiring), formally
+closed 2026-09-15 with an ADR-0004 addendum recording 297
+attributes stored and a 4% guardrail drop rate. Every gate passed:
+39 tests, typecheck, lint, core-purity, and the ingest report
+itself claimed a green run.
+
+**What GW-01's amended acceptance criteria said.** *"Retrieval
+relevance measured with and without extracted attributes on the
+golden set."* That required `chunks.embedding` to be populated —
+retrieval relevance is a similarity metric over vectors.
+
+**What the code actually did.** The GW-01 ingest pipeline called
+OpenAI for **attribute extraction only**. The embedder was never
+called; `chunks.embedding` stayed NULL on every one of the 417
+chunks. Migration 001 declared the column and the HNSW index, and
+both existed and looked correct — but the column was empty.
+
+**How it went undetected until GW-02.** The 39 tests, typecheck,
+lint, core-purity, and the ingest report all passed because none
+of them consumed the embedding column for real. The ingest
+report's "297 attributes stored" was a confident count of what
+the code *did* do; nothing checked what it *should* also have done.
+The gap only surfaced when GW-02's first experiment run reported
+dense retrieval at 0.0% recall — and dense was 0.0% because the
+`WHERE embedding IS NOT NULL` clause in the retrieval RPC filtered
+out every row.
+
+**Correction.** A one-off backfill
+(`packages/retrieval-experiment/src/backfill-embeddings.ts`) populated
+all 417 embeddings in ~30 s at ~$0.002 cost, idempotent and
+rerunnable. The rerun gave the real baseline (dense at 94.4%
+recall@10). Sprint 2 folds embedding generation into `pnpm ingest`
+so a fresh corpus doesn't ship without embeddings; that story
+prevents recurrence.
+
+**Structural lesson recorded in `ai-assisted-development.md`.** A
+component is only verified by something downstream that consumes
+its output for real. Tests that exercise a pipeline's own reporting
+verify the reporting, not the pipeline.
+
 ### Didn't ship
 - (Nothing outstanding from this sprint prep.)
 
@@ -384,3 +432,150 @@ catch up.
 - ADR-0006 (chunking strategy), ADR-0007 (retrieval query filters),
   ADR-0008 (fusion strategy addendum), ADR-0009 (synonym dictionary) —
   Sprint 1+.
+
+## Sprint 1 — close-out (2026-09-15)
+
+### Goal
+Corpus in Supabase, golden dataset authored, retrieval implemented,
+Sprint 1 baseline measured. The design document has real numbers to
+carry into Sprint 2, not projected ones.
+
+### Shipped
+- **GW-01 — corpus ingestion** — `packages/ingestion/` with product
+  chunker + guide chunker + attribute-extractor validation + Supabase
+  persistence + gpt-4o-mini extractor + `pnpm ingest` CLI + runbook.
+  See `d2a8ac1` (commit a), `030dd0b` (commit b). Closed and
+  corrected mid-sprint — see the correction entry above.
+- **GW-02 — hybrid retrieval + Sprint 1 baseline** — three retrievers
+  behind the port (dense / sparse / hybrid), two fusion strategies
+  (RRF, weighted), retrieval-experiment CLI, migration 002 with RPC
+  helpers, baseline results at `evals/results/sprint-1/retrieval-baseline.md`,
+  ADR-0001 addendum applying the stopping rule. See `40e512a`.
+- **Sprint 1 golden dataset** — 40 cases at
+  `evals/datasets/sprint-1/cases.jsonl`, schema loader passes,
+  reconciliation grid sums to 40 across intent × provenance. Batches
+  1–3 = `6369ad8`, `fd5ba53`, `4ad962b`; source-ID pass = `022815e`.
+- **Canonical policy guides** — `data/guides/opening-hours.md`,
+  `data/guides/delivery.md`, `data/guides/rug-sizing.md`. Both policy
+  guides carry an explicit "superseded — do not resurface" section;
+  see the corpus-staleness finding below.
+- **Ports/adapters expansion** — `PgvectorDenseRetriever`,
+  `PgTsRankRetriever`, `HybridRetriever`, `rrf`, `weightedFusion` in
+  `packages/adapters`. Fusion math locked by 10 unit tests.
+- **Helpers** — `evals/scripts/find_chunks.py` (chunk-ID lookup for
+  populating required_source_ids); `packages/retrieval-experiment/src/backfill-embeddings.ts`
+  (one-off — see GW-01 correction).
+
+### Scope changes recorded during the sprint
+- **GW-01 amended** for attribute extraction (2026-09-15). Recorded
+  above.
+- **New tags in the golden-dataset spec** — `three-state-stock`,
+  `source-contradiction`, `price-tier-substitute`, `superseded-source`,
+  `substitute-offered`, `service-referral` (tag AND intent — the tag
+  covers cross-cutting cases, the intent covers pure service-offer
+  questions), `order-state`, `trade-synonym`. Each landed with a
+  discriminating test and a distinction from adjacent tags.
+- **`service-referral` promoted from tag to intent** after case 24
+  failed all five original intents' discriminating tests. Schema
+  change in `evals/groundwork_evals/schema.py`.
+- **Grid rebalance (Option A)** — real-customer overflowed from
+  planned 20 to actual 25. Boundary probes reduced from 12 planned to
+  7 actual; adversarial floor preserved at 8. Reconciliation grid
+  sums to 40.
+
+### The Sprint 1 baseline table (first row of the four-sprint series)
+
+Format is designed to append: subsequent sprints add rows below.
+See `evals/results/sprint-1/retrieval-baseline.md` for slices and
+per-case detail.
+
+| sprint | config | recall@5 | recall@10 | nDCG@10 | p50 ms | p95 ms | notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | dense-only (noop rerank) | 83.3% | 94.4% | 62.4% | 232 | 523 | 17/18 on real-customer slice. Hybrid comparison deferred — sparse was returning empty (see AND-semantics finding). |
+
+Sprint 2 will append a row after (a) sparse is fixed to
+`websearch_to_tsquery` and the real hybrid comparison runs, and
+(b) the reranker spike lands.
+
+### Sprint 1 findings, condensed
+
+1. **Corpus staleness is a recurring pattern**, not a quirk. Three
+   independent `superseded-source` instances surfaced in the same
+   four-month DM sample (delivery policy, bank holidays, Thunderbrook
+   Healthy Herbal Muesli). Recorded in `evals/datasets/README.md` §5
+   as a finding about retail knowledge bases in general.
+2. **The guide gap ADR-0003 predicted is measurable.** Three fit
+   cases (026, 027, 030) have no source chunks because product
+   listings can't carry fit rules. Saddle-fitting and girth-fitting
+   guides named as Sprint 2 candidates in ADR-0003's second addendum.
+3. **A corpus has no positive representation of absence.** Nine
+   answer cases legitimately have `[]` — three-state negatives,
+   brand-not-stocked, orderable positives. The assistant scores
+   correctly only by failing to retrieve, which is fragile.
+   "What we don't stock" guide named as a Sprint 2 candidate.
+4. **The embedding gap** — `chunks.embedding` was NULL on every row
+   because GW-01's ingest pipeline never called the embedder. Every
+   local gate was green. Recorded above and in
+   `docs/ai-assisted-development.md`. Sprint 2 folds embedding
+   generation into `pnpm ingest`.
+5. **The AND-semantics finding** — `plainto_tsquery` combines query
+   tokens with AND, so *"how much is your shavings pls"* becomes
+   `much & shaving & pls` and returns nothing. Sparse recall@10 at
+   5.6% is the resulting floor. Sprint 2 candidate is
+   `websearch_to_tsquery` or an OR-fallback.
+
+Findings 1–3 came from writing golden cases and populating source
+IDs — the authoring process itself was diagnostic. Findings 4–5
+came from running the baseline. In both cases the diagnostic was
+downstream consumption, not upstream inspection.
+
+### What Sprint 2 inherits, in priority order
+
+1. **Fold embedding generation into `pnpm ingest`.** Directly
+   prevents recurrence of the GW-01 gap. Consumer-verifies-producer
+   from Sprint 2 onward because retrieval always has to read the
+   column.
+2. **Fix sparse `plainto_tsquery` → `websearch_to_tsquery`** (or add
+   an OR-fallback in the RPC). Enables the actual hybrid comparison
+   the Sprint 1 baseline could not run.
+3. **Rerun the retrieval baseline** with a working sparse retriever.
+   Hybrid vs dense decision opens.
+4. **Reranker spike.** Dense-only vs dense+Cohere Rerank v3 vs
+   dense+bge-reranker-base against Sprint 1's dense-only baseline.
+   Apply ADR-0001's stopping rule as written.
+5. **Saddle-fitting guide + girth-fitting guide** (`data/guides/`)
+   to close the fit gap ADR-0003 predicted. Populate the
+   `required_source_ids` of cases 026, 027, 030 in a second pass.
+6. **"What we don't stock" guide** to give the retriever a positive
+   chunk to cite for negative claims.
+7. **ADR-0009 synonym dictionary** with a specific measurement of
+   case 007's top-5 hit rate before and after (currently hits top-10
+   but not top-5).
+8. **Golden case additions** per ADR-0005 — four cases per product
+   type covering exact / substitute-held / orderable / genuinely-
+   unavailable. Coordinated with the SME.
+9. **Live-target smoke check on `pnpm retrieve`** so a corpus refresh
+   that breaks retrieval doesn't silently ship green tests. Same
+   pattern as `scripts/smoke.mjs` for the API.
+
+### Eval delta
+- N/A on the golden metrics themselves (no reference baseline to
+  compare against — Sprint 1 IS the reference).
+- First-row baseline recorded above.
+
+### Decisions / ADRs
+- ADR-0001 addendum landed — Sprint 1 baseline outcome, dense-only
+  ships, reranker deferred to Sprint 2. Metric-name correction
+  recorded in the same addendum.
+- ADR-0003 second addendum landed — guide gaps measured, three
+  Sprint 2 guide candidates named.
+- ADR-0004 addendum landed — attribute extraction shipped with a
+  4% guardrail-drop rate and a 297-attribute store.
+- ADR-0005 landed — substitute ranking decision only, Sprint 3 build.
+
+### Demo
+Recorded at `docs/demos/sprint-1.md` per the handbook's
+"each sprint ends with a recorded demonstration" requirement.
+Five minutes, screen recording, no polish: the deployed URL, the
+corpus loaded, a retrieval query running, the baseline report.
+See the demo doc for the script and the archived link.

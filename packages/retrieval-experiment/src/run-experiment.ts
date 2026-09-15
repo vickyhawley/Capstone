@@ -12,7 +12,10 @@
  *
  * Metrics per configuration:
  * - recall@5 and recall@10 over the 18 populated-source cases only
- * - retrieval-relevance (fraction of top-k that appear in required_source_ids)
+ * - nDCG@10 — matches the eval harness's `retrieval_relevance`
+ *   (binary relevance, log-position discount). An earlier version
+ *   of this file computed precision@k under a "relevance" label,
+ *   which mismatched the harness. Fixed 2026-09-15.
  * - latency p50 / p95 (measured in-process, wall-clock per query)
  * - per-slice breakdown by provenance (real / boundary / adversarial)
  *   and by intent
@@ -183,17 +186,34 @@ function recallAtK(perCase: readonly PerCaseResult[], k: number): number {
   return hits / scored.length;
 }
 
-function retrievalRelevance(perCase: readonly PerCaseResult[]): number {
-  // Fraction of retrieved chunks that appear in required_source_ids,
-  // averaged across cases with sources. Cases without sources are
-  // excluded — relevance is undefined when the target set is empty.
+function dcg(relevances: readonly number[]): number {
+  let total = 0;
+  for (let i = 0; i < relevances.length; i++) {
+    const rel = relevances[i] ?? 0;
+    total += rel / Math.log2(i + 2);
+  }
+  return total;
+}
+
+function nDcgAtK(perCase: readonly PerCaseResult[], k: number): number {
+  // nDCG@k. Matches evals/groundwork_evals/metrics.py's retrieval_relevance
+  // implementation so the same number is comparable between this CLI and
+  // the eval harness. Relevances are binary: 1 if the chunk id is in
+  // required_source_ids, 0 otherwise. Ideal DCG is the DCG of retrieving
+  // min(|required|, k) relevant items in top positions. Cases without
+  // required sources are held out (undefined when the target set is empty).
   const scored = perCase.filter((c) => c.requiredSources.length > 0);
   if (scored.length === 0) return 0;
   let total = 0;
   for (const c of scored) {
-    if (c.retrievedIds.length === 0) continue;
-    const hits = c.retrievedIds.filter((id) => c.requiredSources.includes(id)).length;
-    total += hits / c.retrievedIds.length;
+    const topK = c.retrievedIds.slice(0, k);
+    if (topK.length === 0) continue;
+    const requiredSet = new Set(c.requiredSources);
+    const relevances = topK.map((id) => (requiredSet.has(id) ? 1 : 0));
+    const idealCount = Math.min(c.requiredSources.length, k);
+    const ideal = dcg(Array(idealCount).fill(1));
+    if (ideal === 0) continue;
+    total += dcg(relevances) / ideal;
   }
   return total / scored.length;
 }
@@ -213,7 +233,7 @@ interface SliceMetrics {
   readonly countScored: number;
   readonly recallAt5: number;
   readonly recallAt10: number;
-  readonly relevance: number;
+  readonly ndcgAt10: number;
   readonly p50: number;
   readonly p95: number;
 }
@@ -226,7 +246,7 @@ function computeSlice(name: string, perCase: readonly PerCaseResult[]): SliceMet
     countScored: scored.length,
     recallAt5: recallAtK(perCase, 5),
     recallAt10: recallAtK(perCase, 10),
-    relevance: retrievalRelevance(perCase),
+    ndcgAt10: nDcgAtK(perCase, 10),
     p50: percentile(
       perCase.map((c) => c.latencyMs),
       0.5,
@@ -256,12 +276,15 @@ function renderMarkdown(results: readonly ExperimentResult[]): string {
   lines.push('');
   lines.push('## Headline table');
   lines.push('');
-  lines.push('| config | recall@5 | recall@10 | relevance | p50 ms | p95 ms |');
+  lines.push('| config | recall@5 | recall@10 | nDCG@10 | p50 ms | p95 ms |');
+  lines.push(
+    '<!-- nDCG@10 matches evals/groundwork_evals/metrics.py `retrieval_relevance` — binary relevance, log-position discount. An earlier version of this report labelled precision@10 as "relevance"; that mismatched the harness. Fixed. -->',
+  );
   lines.push('| --- | ---: | ---: | ---: | ---: | ---: |');
   for (const r of results) {
     const s = computeSlice('all', r.perCase);
     lines.push(
-      `| ${r.configName} | ${formatPct(s.recallAt5)} | ${formatPct(s.recallAt10)} | ${formatPct(s.relevance)} | ${s.p50} | ${s.p95} |`,
+      `| ${r.configName} | ${formatPct(s.recallAt5)} | ${formatPct(s.recallAt10)} | ${formatPct(s.ndcgAt10)} | ${s.p50} | ${s.p95} |`,
     );
   }
   lines.push('');
@@ -270,12 +293,18 @@ function renderMarkdown(results: readonly ExperimentResult[]): string {
       results[0]?.perCase.filter((c) => c.requiredSources.length > 0).length ?? 0
     } cases with populated source IDs. The 8 legitimately-empty answer cases (§1) and 14 escalate/abstain cases are excluded from recall — they score elsewhere.`,
   );
+  lines.push('');
+  lines.push('### Hybrid vs dense — the comparison did not happen this sprint');
+  lines.push('');
+  lines.push(
+    "The rows above show hybrid-rrf and hybrid-weighted matching dense-only exactly. That is *not* evidence that fusion adds no value. It is evidence that the sparse component was returning empty on almost every query (see the ts_query AND-semantics finding in ADR-0001's addendum) — 5.6% recall@10 means 1 case in 18 got any sparse hit at all. Hybrid was compared against dense-plus-nothing, not against dense-plus-a-working-sparse-retriever. The Sprint 1 recommendation ships dense-only; the hybrid comparison is deferred to Sprint 2 after `plainto_tsquery` is replaced with `websearch_to_tsquery` or an OR-fallback.",
+  );
 
   // Per-provenance slice
   lines.push('');
   lines.push('## By provenance');
   lines.push('');
-  lines.push('| config | slice | scored | recall@5 | recall@10 | relevance |');
+  lines.push('| config | slice | scored | recall@5 | recall@10 | nDCG@10 |');
   lines.push('| --- | --- | ---: | ---: | ---: | ---: |');
   const provs: PerCaseResult['provenanceBucket'][] = ['real', 'boundary', 'adversarial'];
   for (const r of results) {
@@ -286,7 +315,7 @@ function renderMarkdown(results: readonly ExperimentResult[]): string {
         lines.push(`| ${r.configName} | ${p} | 0 | — | — | — |`);
       } else {
         lines.push(
-          `| ${r.configName} | ${p} | ${s.countScored} | ${formatPct(s.recallAt5)} | ${formatPct(s.recallAt10)} | ${formatPct(s.relevance)} |`,
+          `| ${r.configName} | ${p} | ${s.countScored} | ${formatPct(s.recallAt5)} | ${formatPct(s.recallAt10)} | ${formatPct(s.ndcgAt10)} |`,
         );
       }
     }
@@ -296,7 +325,7 @@ function renderMarkdown(results: readonly ExperimentResult[]): string {
   lines.push('');
   lines.push('## By intent');
   lines.push('');
-  lines.push('| config | intent | scored | recall@5 | recall@10 | relevance |');
+  lines.push('| config | intent | scored | recall@5 | recall@10 | nDCG@10 |');
   lines.push('| --- | --- | ---: | ---: | ---: | ---: |');
   const intents = [
     'product',
@@ -314,7 +343,7 @@ function renderMarkdown(results: readonly ExperimentResult[]): string {
         lines.push(`| ${r.configName} | ${intent} | 0 | — | — | — |`);
       } else {
         lines.push(
-          `| ${r.configName} | ${intent} | ${s.countScored} | ${formatPct(s.recallAt5)} | ${formatPct(s.recallAt10)} | ${formatPct(s.relevance)} |`,
+          `| ${r.configName} | ${intent} | ${s.countScored} | ${formatPct(s.recallAt5)} | ${formatPct(s.recallAt10)} | ${formatPct(s.ndcgAt10)} |`,
         );
       }
     }

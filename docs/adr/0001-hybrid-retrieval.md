@@ -373,12 +373,20 @@ stopping rule below.
 
 ### Headline
 
-| config | recall@5 | recall@10 | relevance | p50 ms | p95 ms |
+| config | recall@5 | recall@10 | nDCG@10 | p50 ms | p95 ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| dense | **83.3%** | **94.4%** | 15.0% | 228 | 340 |
-| sparse | 5.6% | 5.6% | 5.6% | 57 | 207 |
-| hybrid-rrf | 83.3% | 94.4% | 15.0% | 229 | 266 |
-| hybrid-weighted | 83.3% | 94.4% | 15.0% | 251 | 290 |
+| dense | **83.3%** | **94.4%** | 62.4% | 232 | 523 |
+| sparse | 5.6% | 5.6% | 5.6% | 49 | 123 |
+| hybrid-rrf | 83.3% | 94.4% | 62.4% | 235 | 283 |
+| hybrid-weighted | 83.3% | 94.4% | 62.4% | 237 | 277 |
+
+**Metric-name correction (2026-09-15).** An earlier version of this
+addendum reported a "relevance" column that computed precision@10, not
+nDCG@10 as the eval-harness definition demands
+(`evals/groundwork_evals/metrics.py`). The numbers under that name
+looked suspicious (15% next to 94.4% recall) which is what surfaced
+the mislabel. The table above uses the corrected metric; recall@k and
+latency numbers are unchanged.
 
 Scored over 18 answer cases with populated source IDs. The 8
 legitimately-empty answer cases (three-state negatives, brand-not-
@@ -397,17 +405,24 @@ AND costs less than 300 ms p95 additional latency."*
 
 Applied honestly:
 
-- **Fusion.** RRF and weighted both land at 94.4% recall@10 — gap is
-  zero absolute points. Under the default rule, RRF wins by tie-break
-  ("fewer parameters, one less thing to tune").
-- **Whether to run hybrid at all.** Dense-only also lands at 94.4%
-  recall@10. Hybrid adds 4–30 ms latency for no recall improvement,
-  because the sparse component contributes nothing (see the ts_query
-  finding below). **Ship dense-only for Sprint 1**, with the fusion
-  code kept behind the port for the Sprint 2 rematch after sparse is
-  fixed. This is not a rejection of the hybrid design ADR-0001
-  argued for — it's a Sprint 1 measurement that hybrid earns its
-  keep once both indexes are actually contributing signal.
+- **Fusion.** RRF and weighted both land at 94.4% recall@10 in the
+  numbers above, but see the caveat immediately below. Under the
+  default rule (gap < 3pt, default to RRF), RRF is the placeholder
+  winner pending the Sprint 2 rematch.
+- **Hybrid vs dense — the comparison did not actually happen.** The
+  numbers show hybrid = dense = 94.4% recall@10. That is *not* evidence
+  that fusion doesn't help. It is evidence that the sparse retriever
+  returned empty on almost every query (5.6% recall@10 = 1 case of 18)
+  because `plainto_tsquery` uses AND semantics — see the ts_query
+  finding below. **Hybrid was compared against dense-plus-nothing, not
+  against dense-plus-a-working-sparse-retriever.** The honest statement
+  is: hybrid could not be evaluated at Sprint 1 because one of its two
+  components was returning empty. The comparison is deferred to Sprint 2
+  after `plainto_tsquery` is replaced with `websearch_to_tsquery` or an
+  OR-fallback.
+- **What ships for Sprint 1.** Dense-only. Fusion code stays behind
+  the port for the Sprint 2 rematch. This is not "hybrid showed no
+  benefit over dense" — that comparison has not happened yet.
 - **Reranker.** No treatment implemented; noop ships. This is the
   ADR's explicit fallback: *"If only one metric clears, ship the
   noop and re-open in Sprint 2."* Zero metrics cleared because zero
