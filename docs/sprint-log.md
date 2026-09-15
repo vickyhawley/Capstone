@@ -182,6 +182,22 @@ lands. Logging the split now — the discovery of GW-09's "close-time
 surprise" pattern (the deploy defects that had to be caught in-flight)
 is the trigger for making delivery shape visible up front.
 
+  - Commit (a) landed 2026-09-15 as `d2a8ac1`: `packages/ingestion/`
+    with product + guide chunkers, attribute-extractor validation
+    (source-span invariants enforced by test), typed attribute
+    schemas for Feed / Bedding / Haylage / Supplements / Outdoor
+    Rugs (colour common attribute across all), fixture guide
+    `data/guides/rug-sizing.md`. 38 tests, all gates green.
+  - Commit (b) landed 2026-09-15 as `030dd0b`: persistence to
+    `documents`/`chunks`, gpt-4o-mini extractor with structured
+    outputs, `packages/ingestion/src/ingest-cli.ts` runner behind
+    `pnpm ingest`, `docs/runbooks/ingest.md`. Story CODE-closes
+    here; formally closes once the live ingest has been run against
+    Supabase, the ingest report reviewed, and the colour agreement
+    number recorded in ADR-0004's addendum. Live run gated on
+    `.env.local` populated with `SUPABASE_URL`,
+    `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`.
+
 **ADR renumbering.** Adding attribute extraction takes ADR-0004; the
 originally-planned chunking-strategy ADR slides to ADR-0006. Substitute
 ranking (introduced by the same brief as a Sprint 3 decision) takes
