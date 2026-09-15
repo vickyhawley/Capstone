@@ -1,8 +1,10 @@
+import { commonAttributes } from './common.js';
 import type { AttributeSchema } from './types.js';
 
 export const supplementsSchema: AttributeSchema = {
   productType: 'Supplements',
   attributes: [
+    ...commonAttributes,
     {
       key: 'target_concern',
       displayName: 'Target concern',

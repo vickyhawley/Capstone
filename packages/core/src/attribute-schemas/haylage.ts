@@ -1,8 +1,10 @@
+import { commonAttributes } from './common.js';
 import type { AttributeSchema } from './types.js';
 
 export const haylageSchema: AttributeSchema = {
   productType: 'Haylage',
   attributes: [
+    ...commonAttributes,
     {
       key: 'cut_type',
       displayName: 'Cut type',

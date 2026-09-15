@@ -14,12 +14,17 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "ingest": "tsx src/ingest-cli.ts"
   },
   "dependencies": {
-    "@groundwork/core": "workspace:*"
+    "@groundwork/core": "workspace:*",
+    "@supabase/supabase-js": "^2.116.0",
+    "openai": "^7.15.0"
   },
   "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
     "typescript": "5.7.2",
     "vitest": "^2.1.9"
   }

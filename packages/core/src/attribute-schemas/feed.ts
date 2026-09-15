@@ -1,8 +1,10 @@
+import { commonAttributes } from './common.js';
 import type { AttributeSchema } from './types.js';
 
 export const feedSchema: AttributeSchema = {
   productType: 'Feed',
   attributes: [
+    ...commonAttributes,
     {
       key: 'feeding_rate_g_per_100kg_per_day',
       displayName: 'Feeding rate (g per 100 kg horse per day)',

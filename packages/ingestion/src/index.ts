@@ -19,3 +19,13 @@ export {
   type DroppedAttribute,
   type ExtractionResult,
 } from './attribute-extractor.js';
+export {
+  composeSource,
+  composeSystemPrompt,
+  composeUserPrompt,
+  extractAttributes,
+  EXTRACTION_MODEL,
+  PROMPT_VERSION,
+  type ExtractionInput,
+} from './openai-extractor.js';
+export { persistDocumentWithChunks, type PersistResult } from './persistence.js';

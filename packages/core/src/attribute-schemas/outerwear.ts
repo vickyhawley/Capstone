@@ -1,8 +1,16 @@
+import { commonAttributes } from './common.js';
 import type { AttributeSchema } from './types.js';
 
+/**
+ * Matches the catalogue's `Outdoor Rugs` product type (turnouts for
+ * horses). Rider outerwear — Equidry jackets, coats, gilets — is
+ * catalogued under `Equestrian Clothing` and needs its own schema
+ * before those products can be extracted against. Sprint 2 candidate.
+ */
 export const outerwearSchema: AttributeSchema = {
-  productType: 'Outerwear',
+  productType: 'Outdoor Rugs',
   attributes: [
+    ...commonAttributes,
     {
       key: 'waterproof_mm',
       displayName: 'Waterproof rating (mm)',

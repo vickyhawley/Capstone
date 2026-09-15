@@ -1,8 +1,10 @@
+import { commonAttributes } from './common.js';
 import type { AttributeSchema } from './types.js';
 
 export const beddingSchema: AttributeSchema = {
   productType: 'Bedding',
   attributes: [
+    ...commonAttributes,
     {
       key: 'material',
       displayName: 'Material',
