@@ -35,11 +35,7 @@ only closed day in the year, but confirm rather than assume).
 ## Contact
 
 For confirmation of hours on a specific date, phone the shop
-during opening hours: `<TBC — phone number>`. Populate this
-placeholder from the shop's real number before it can be quoted;
-the assistant will otherwise surface the TBC verbatim, which is
-the intended behaviour (better to make the gap visible than to
-silently synthesise a plausible-looking number).
+during opening hours: **01425 201301**.
 
 ## Location
 
