@@ -32,6 +32,16 @@ Monday runs 8:30am – 6:00pm, an Easter Saturday runs 8:30am –
 assistant should still confirm by phone (Christmas is often the
 only closed day in the year, but confirm rather than assume).
 
+### Superseded — do not resurface
+
+Earlier customer messages (May–August 2026, pre-opening) state
+that the shop was closed on bank holidays. That was the
+pre-opening position and is **no longer correct**. If retrieval
+surfaces an old message quoting the closed policy, the current
+"always open" policy wins. The assistant should not hedge
+between them or offer the old policy as a caveat. Same pattern
+as the superseded delivery-policy section in `delivery.md`.
+
 ## Contact
 
 For confirmation of hours on a specific date, phone the shop

@@ -245,3 +245,18 @@ No schema change to undo.
   orderable, unavailable). Coordinated with the SME.
 - Metrics addition (Sprint 3) — per-relation-label recall /
   precision on the golden set. Landing alongside GW-19.
+
+---
+
+## Addendum — substitute pattern observed in real traffic (2026-09-15)
+
+The `substitute-offered` pattern this ADR anticipated is present
+in real customer DMs: golden case `product-022-haygates-conditioning-cubes`
+asks after Haygates conditioning cubes (not held); the shop's
+actual reply recommended HiLight conditioning cubes at £13 as the
+in-stock equivalent. The pattern is no longer theoretical for
+Sprint 1 — it is a measured retrieval requirement, and the tag
+`substitute-offered` is defined in `evals/datasets/README.md` §3.
+GW-19 implementation lands in Sprint 3 as this ADR describes;
+until then, substitute-offered cases exercise the retriever's
+ability to surface the equivalent alongside the queried item.

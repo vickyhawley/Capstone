@@ -100,10 +100,10 @@ Mapping from intent to expected_behavior:
 
 | intent            | expected_behavior            | rule                                                                            |
 | ----------------- | ---------------------------- | ------------------------------------------------------------------------------- |
-| product           | answer                       | Always. An unknown-product answer is still an answer ("we don't stock that").   |
-| fit               | answer                       | Always. If a fit question hides a welfare signal it is *not* a fit case — it is welfare-clinical (see §2). |
-| logistics         | answer / escalate / abstain  | Mostly answer. `source-contradiction` cases (§3) can escalate to a human or abstain when sources disagree. |
-| welfare-clinical  | escalate                     | **Always.** Welfare-clinical is the only intent that must always escalate — plain abstain leaves the animal unhelped. |
+| product           | answer / escalate            | Mostly answer. Can escalate if tagged `service-referral` or `order-state` (§3).  |
+| fit               | answer / escalate            | Mostly answer. Can escalate if tagged `service-referral` (§3) — hat fitting is the canonical example. If a fit question hides a welfare signal it is *not* a fit case — it is welfare-clinical (see §2). |
+| logistics         | answer / escalate / abstain  | Mostly answer. `source-contradiction` cases can escalate or abstain (§3). `order-state` cases escalate (§3). |
+| welfare-clinical  | escalate                     | **Always.** Plain abstain leaves the animal unhelped. |
 | out-of-scope      | abstain                      | Always. Escalate is wrong — no one to escalate to.                              |
 
 Two invariants derived from the table above, checked by the runner:
@@ -533,6 +533,200 @@ axis alongside relation-label, so the answer path can surface
 "here's the exact match; here's the equivalent at a much lower
 price if that's what you need".
 
+### `superseded-source`
+
+**Definition.** Questions whose corpus contains both a *current*
+and an *outdated* answer, where the outdated one is identifiable
+as **superseded** by a dated policy change rather than as
+**competing** with the current answer. The old messages aren't
+wrong-in-context; they were right at the time and are wrong now.
+
+**Distinction from `source-contradiction`.** Source-contradiction
+covers *genuine disagreement with no resolution* — four staff
+members quoting four incompatible delivery policies on the same
+day, none of them stale, none of them authoritative. Superseded-
+source covers *resolved disagreement* — a dated policy change
+turned yesterday's correct answer into today's wrong one. If a
+date-of-record can be pointed at, it's superseded-source; if it
+can't, it's source-contradiction.
+
+**Discriminating test.** Does one of the retrieved answers
+belong to a pre-dated policy that has since changed? For NFCS
+the paradigmatic split is pre-opening (May–August 2026) versus
+post-opening (September 2026 onward) — the shop's delivery
+policy and bank-holiday policy both changed at opening, and
+the DM export contains both.
+
+**Applies to intents.** `logistics` (most common — the
+policies that changed were transactional), occasionally
+`product` (if a product line was discontinued and old messages
+still name it).
+
+**Expected behaviour.** `answer`, using the current policy
+only. Not `abstain` (the current answer is knowable), not
+`escalate` (staff have already answered it).
+
+**Failure mode.** Surfacing the old policy, hedging between
+the two (*"our delivery is free — although some records mention
+a small charge on orders under £200"*), or averaging them.
+Each of those is a way of failing to notice the policy change.
+
+**Prohibited claims.** Strings taken from the *superseded*
+policy that would prove the old answer had leaked through.
+Word-boundary matched (see §1). For NFCS delivery: `"£200"`,
+`"three months"`, `"small charge"`, `"first 3 months"`. For
+bank holidays: `"closed on bank holidays"`, `"closed on bank
+holiday Monday"`. When the current policy comes with its own
+canonical guide (`data/guides/delivery.md`,
+`data/guides/opening-hours.md`), those guides carry an explicit
+"Superseded — do not resurface" section for the same reason.
+
+### `substitute-offered`
+
+**Definition.** Product questions where the shop does not hold
+the specific item but the honest answer *is not* an offer to
+order it (that's `three-state-stock` positive-side). Instead,
+the honest answer is to recommend an in-stock equivalent — a
+different brand, formulation, or variant that meets the same
+need.
+
+**Distinction from `three-state-stock` positive-side.**
+Three-state-stock offers to source the specific item ("we can
+order it in for you"). Substitute-offered pivots to a
+different item that's already held ("we don't stock haygates
+but here's HiLight conditioning cubes at £13"). The customer
+gets a working recommendation *today*, not a promised delivery.
+
+**Distinction from `price-tier-substitute`.** Price-tier is
+about tier gaps (£30 basics vs £2000 premium). Substitute-
+offered is same-tier, different brand or formulation — the
+kind of substitute a knowledgeable staff member reaches for
+without being asked.
+
+**Discriminating test.** Would the shop's real answer name a
+different product from the one asked about, without offering
+to order the original? If yes, route as substitute-offered.
+
+**Applies to intents.** `product` (most common), occasionally
+`fit`.
+
+**Expected behaviour.** `answer` — but the answer must
+identify the substitute by name and price where known. This
+is the retrieval-side operationalisation of the substitute
+relation that ADR-0005 named as an intent-only decision;
+GW-19 (Sprint 3) will make it a first-class ranking axis.
+Until then, substitute-offered cases exercise the retriever's
+ability to surface an equivalent alongside the queried item.
+
+**Prohibited claims.** Case-dependent — leave empty when
+substring can't cleanly express the failure. A collapse-to-no
+failure ("we don't stock haygates" without offering the
+substitute) matters, but the required-source-ids check
+downstream is the cleaner signal: if the substitute chunk
+wasn't retrieved, the case fails on retrieval, not on prose.
+
+**Real traffic.** First observed instance in Sprint 1 is
+`product-022-haygates-conditioning-cubes`. See ADR-0005
+addendum.
+
+### `service-referral`
+
+**Definition.** Questions whose honest answer is *"book a
+fitting / consultation with staff"* rather than a product or
+policy answer. The shop offers services — currently hat
+fitting is the canonical example — that no amount of retrieval
+answers correctly. Attempting to answer them from the corpus is
+the failure mode.
+
+**Intent-or-tag decision.** `service-referral` is a **tag**,
+not a new intent. Reasoning:
+
+1. Intents (`product`, `fit`, `logistics`, `welfare-clinical`,
+   `out-of-scope`) are about the primary *content class* of the
+   question. Service-referral cuts across those — a hat-fitting
+   question is a `fit`-adjacent content class that routes to a
+   service; a saddle-fitting question is the same; a farrier-
+   referral question would be `welfare-clinical`-adjacent and
+   also routes to a service. Multiple intents can carry the
+   `service-referral` tag; that fits the cross-cutting pattern.
+2. The escalate/answer/abstain routing is captured by
+   `expected_behavior`; the *reason* for escalation is captured
+   by the tag. Overloading intent to also carry the reason
+   would collapse those axes.
+3. Adding an intent is a schema change (the `Intent` Literal in
+   `groundwork_evals/schema.py`). Adding a tag is data-only and
+   reversible. If Sprint 2 evidence shows service-referral cases
+   need first-class metric slicing, promoting the tag to an
+   intent is a small refactor; the reverse would break every
+   case authored under the intent.
+
+**Discriminating test.** Does the honest answer require
+information that isn't in the corpus and can't be — because it
+requires physical measurement, in-person judgement, or
+specialist advice? If yes, route as service-referral.
+
+**Applies to intents.** `fit` (hat fitting, saddle fitting),
+occasionally `welfare-clinical` (farrier / vet referrals where
+those are structured shop services), occasionally `product`
+(when the meta-question is *"do you offer X service?"*).
+
+**Expected behaviour.** `escalate`. This widens the previous
+invariant in §6.5 that welfare-clinical was the only always-
+escalating category. That widening is **deliberate**:
+escalation is a general property — the system routes to a
+human whenever the answer requires something it structurally
+cannot do — not a safety feature attached to one topic. The
+updated invariant in §6.5 names both.
+
+**Prohibited claims.** Case-dependent. Attempts to answer the
+question from the corpus (a hat-sizing table, a saddle-sizing
+guide) are the failure. Substring matching is fiddly here
+because sizing language is legitimate in a *"come in for a
+fitting; sizes we hold run X to Y"* answer. Prefer leaving
+`prohibited_claims` empty and relying on `correct_abstention`
+(the escalate metric).
+
+### `order-state`
+
+**Definition.** Questions that require access to the shop's
+order-management system rather than the product corpus — where
+is my order, when will my delivery arrive, has my payment gone
+through. These are legitimate customer questions with concrete
+answers, but the answers live in the OMS, not in retrievable
+chunks.
+
+**Distinction from live-inventory exclusions (§6.6).** §6.6
+excludes questions that need *live inventory data* (the exact
+stock right now for an arbitrary product) from the Sprint 1
+dataset. Order-state cases *are* in the dataset — with
+`expected_behavior: escalate` — because a "sorry, staff can
+tell you" reply is a valid answer to any of them. The
+distinction is: live inventory has no valid corpus-based
+answer, so it's excluded; order-state has a valid corpus-based
+non-answer (escalate), so it's included as a routing case.
+
+**Discriminating test.** Does answering the question require
+data about a specific customer's specific order — not the
+product catalogue, not the delivery policy, but their order?
+If yes, route as order-state.
+
+**Applies to intents.** `logistics` (delivery timing, order
+status), occasionally `product` (product-level order-history
+questions).
+
+**Expected behaviour.** `escalate`. The system does not have
+access to the OMS in Sprint 1; the assistant's job is to route
+to staff without inventing a delivery slot or a payment
+status.
+
+**Prohibited claims.** Case-dependent, and substring matching
+struggles here. A wrong answer like *"your delivery is
+scheduled for Monday"* is the failure, but the correct
+escalation might legitimately contain phrases like *"staff can
+tell you when your delivery is scheduled"*. Prefer relying on
+`correct_abstention` (the escalate metric) over brittle
+substring rules.
+
 ---
 
 ## 4. Provenance
@@ -774,8 +968,17 @@ Constraints that must hold across the grid:
 - **Every intent has at least one constructed case** (boundary or
   adversarial). Boundaries only exist in relation to other intents.
 - **`welfare-clinical` cases have zero `answer` and zero `abstain`
-  behaviour.** Every welfare case escalates. This is the only
-  intent with that constraint.
+  behaviour.** Every welfare case escalates.
+- **`service-referral`-tagged cases (any intent) escalate.** This
+  widens the previous "welfare-clinical is the only always-
+  escalating category" invariant. Deliberate widening: escalation
+  is a general property (the system routes to a human whenever the
+  answer requires something it structurally cannot do), not a
+  safety feature attached to one topic. Hat fitting is the
+  canonical example; see §3 `service-referral`.
+- **`order-state`-tagged cases escalate.** Same reasoning as
+  service-referral — the answer lives outside the corpus (in the
+  OMS) and the system routes to staff. See §3 `order-state`.
 - **`out-of-scope` cases have zero `answer` and zero `escalate`
   behaviour.** Nobody to escalate to.
 - **At least 4 product cases are tagged `three-state-stock`** and
