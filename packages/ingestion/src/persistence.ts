@@ -114,6 +114,12 @@ async function replaceChunks(
     text: chunk.text,
     token_count: chunk.tokenCount,
     metadata: chunk.metadata,
+    // Cast is deliberate. supabase-js types the embedding column
+    // (which is pgvector `vector(1536)`) as string on the wire, but
+    // PostgREST accepts the JSON array natively. See ADR-0001 for
+    // model commitment; see the GW-01 embedding-gap post-mortem for
+    // why writing NULL here silently kills recall.
+    embedding: (chunk.embedding ?? null) as unknown as string | null,
   }));
 
   const { data: inserted, error: insertError } = await supabase

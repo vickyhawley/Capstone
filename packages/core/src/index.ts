@@ -1,4 +1,5 @@
 export { NotImplementedError } from './errors.js';
+export { EMBEDDING_MODEL, EMBEDDING_DIM } from './embedding.js';
 
 export type { Retriever, RetrievalQuery, RetrievedChunk } from './ports/retriever.js';
 export type {

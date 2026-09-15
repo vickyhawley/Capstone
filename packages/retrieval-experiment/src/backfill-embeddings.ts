@@ -19,7 +19,7 @@
  * on what changing model would entail.
  */
 
-import { EMBEDDING_DIM, EMBEDDING_MODEL } from '@groundwork/adapters';
+import { EMBEDDING_DIM, EMBEDDING_MODEL } from '@groundwork/core';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 

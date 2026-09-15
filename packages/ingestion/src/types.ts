@@ -27,6 +27,14 @@ export interface ChunkInput {
   readonly text: string;
   readonly tokenCount: number;
   readonly metadata: Readonly<Record<string, unknown>>;
+  /**
+   * Optional pgvector row for the chunk. When present, persistence
+   * writes it to `chunks.embedding`. When absent, `chunks.embedding`
+   * stays NULL (which is what happened in GW-01 pre-fold-in and
+   * silently broke dense retrieval — see the sprint 1 close-out
+   * correction). ADR-0001 embedding-model commitment.
+   */
+  readonly embedding?: readonly number[];
 }
 
 export interface DocumentWithChunks {

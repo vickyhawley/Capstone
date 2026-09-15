@@ -36,6 +36,7 @@ import OpenAI from 'openai';
 
 import type { DroppedAttribute } from './attribute-extractor.js';
 import { chunkGuide } from './guide-chunker.js';
+import { embedTexts } from './openai-embedder.js';
 import { extractAttributes } from './openai-extractor.js';
 import { persistDocumentWithChunks } from './persistence.js';
 import { type ShopifyRow, chunkProduct } from './product-chunker.js';
@@ -232,6 +233,24 @@ function mergeAttributesIntoChunks(
   }));
 }
 
+function mergeEmbeddingsIntoChunks(
+  chunks: readonly ChunkInput[],
+  embeddings: readonly number[][],
+): readonly ChunkInput[] {
+  if (embeddings.length !== chunks.length) {
+    throw new Error(
+      `embedding count mismatch: got ${embeddings.length} embeddings for ${chunks.length} chunks`,
+    );
+  }
+  return chunks.map((chunk, i) => {
+    const embedding = embeddings[i];
+    if (!embedding) {
+      throw new Error(`embedding at index ${i} was missing after count check`);
+    }
+    return { ...chunk, embedding };
+  });
+}
+
 // ---------- Guide ingestion ----------
 
 interface IngestReport {
@@ -247,6 +266,8 @@ interface IngestReport {
   colourAgreementSample: number;
   colourAgreementMatches: number;
   extractionErrors: number;
+  chunksEmbedded: number;
+  embeddingErrors: number;
 }
 
 function newReport(): IngestReport {
@@ -263,6 +284,8 @@ function newReport(): IngestReport {
     colourAgreementSample: 0,
     colourAgreementMatches: 0,
     extractionErrors: 0,
+    chunksEmbedded: 0,
+    embeddingErrors: 0,
   };
 }
 
@@ -314,7 +337,28 @@ async function main(): Promise<void> {
     const markdown = readFileSync(resolve(GUIDES_DIR, guideFile), 'utf-8');
     const slug = parse(guideFile).name;
     const docWithChunks = chunkGuide({ markdown, slug });
-    const result = await persistDocumentWithChunks(supabase, docWithChunks, persistOptions);
+
+    let chunksWithEmbeddings: readonly ChunkInput[] = docWithChunks.chunks;
+    try {
+      const embeddings = await embedTexts(
+        openai,
+        docWithChunks.chunks.map((c) => c.text),
+      );
+      chunksWithEmbeddings = mergeEmbeddingsIntoChunks(docWithChunks.chunks, embeddings);
+      report.chunksEmbedded += embeddings.length;
+    } catch (error) {
+      report.embeddingErrors++;
+      console.error(
+        `guide embedding failed for ${slug}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      continue; // don't persist a guide without embeddings — that's the gw-01 gap
+    }
+
+    const merged: DocumentWithChunks = {
+      document: docWithChunks.document,
+      chunks: chunksWithEmbeddings,
+    };
+    const result = await persistDocumentWithChunks(supabase, merged, persistOptions);
     tallyAction(result.action, report);
   }
 
@@ -371,11 +415,33 @@ async function main(): Promise<void> {
       report.productsSkippedNoSchema++;
     }
 
+    // Attach attributes into chunk metadata.
+    const chunksWithAttributes = mergeAttributesIntoChunks(docWithChunks.chunks, attributes);
+
+    // Embed. Fail loudly rather than persist a product without embeddings —
+    // that is exactly the GW-01 gap the fold-in exists to close.
+    let chunksReady: readonly ChunkInput[];
+    try {
+      const embeddings = await embedTexts(
+        openai,
+        chunksWithAttributes.map((c) => c.text),
+      );
+      chunksReady = mergeEmbeddingsIntoChunks(chunksWithAttributes, embeddings);
+      report.chunksEmbedded += embeddings.length;
+    } catch (error) {
+      report.embeddingErrors++;
+      console.error(
+        `[${productIndex}/${groups.size}] embedding failed for ${handle}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      continue;
+    }
+
     // Persist.
-    const mergedChunks = mergeAttributesIntoChunks(docWithChunks.chunks, attributes);
     const merged: DocumentWithChunks = {
       document: docWithChunks.document,
-      chunks: mergedChunks,
+      chunks: chunksReady,
     };
     const result = await persistDocumentWithChunks(supabase, merged, persistOptions);
     tallyAction(result.action, report);
@@ -398,6 +464,10 @@ async function main(): Promise<void> {
   console.log(`  updated:               ${report.documentsUpdated}`);
   console.log(`  forced:                ${report.documentsForced}`);
   console.log(`  unchanged:             ${report.documentsUnchanged}`);
+  console.log('');
+  console.log('Chunk embeddings (ADR-0001, GW-01 embedding-gap fix)');
+  console.log(`  embedded:              ${report.chunksEmbedded}`);
+  console.log(`  errors:                ${report.embeddingErrors}`);
   console.log('');
   console.log('Attribute extraction');
   console.log(`  products extracted:    ${report.productsExtracted}`);

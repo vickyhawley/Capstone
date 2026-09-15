@@ -9,12 +9,15 @@
  * becomes the bottleneck.
  */
 
-import type { RetrievalQuery, RetrievedChunk, Retriever } from '@groundwork/core';
+import {
+  EMBEDDING_DIM,
+  EMBEDDING_MODEL,
+  type RetrievalQuery,
+  type RetrievedChunk,
+  type Retriever,
+} from '@groundwork/core';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type OpenAI from 'openai';
-
-export const EMBEDDING_MODEL = 'text-embedding-3-small';
-export const EMBEDDING_DIM = 1536;
 
 interface DenseRow {
   readonly chunk_id: string;

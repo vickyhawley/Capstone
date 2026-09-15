@@ -1,10 +1,6 @@
 export { StubRetriever } from './retriever/stub-retriever.js';
 export { PgTsRankRetriever } from './retriever/pg-ts-rank-retriever.js';
-export {
-  PgvectorDenseRetriever,
-  EMBEDDING_DIM,
-  EMBEDDING_MODEL,
-} from './retriever/pgvector-dense-retriever.js';
+export { PgvectorDenseRetriever } from './retriever/pgvector-dense-retriever.js';
 export {
   HybridRetriever,
   type HybridRetrieverOptions,
