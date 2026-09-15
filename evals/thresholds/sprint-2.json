@@ -1,5 +1,7 @@
 {
   "intent_classification_accuracy": 0.85,
   "correct_behavior_dispatch": 0.90,
+  "correct_abstention": 0.90,
+  "false_refusal": 0.10,
   "no_prohibited_claims": 1.00
 }

@@ -1068,3 +1068,113 @@ lands here (`packages/core/src/copy/behaviour-copy.ts`).
   render badly. No test asserts a max length today; adding one
   is a five-minute change if a Sprint 3 UI concern surfaces.
   Not in Sprint 2 scope because there's no UI to test against.
+
+### GW-13 close-out (2026-09-16)
+
+**Story:** False-refusal measurement. The GW-11 close-out flagged
+that `correct_abstention` was scoring 0.357 despite the safety
+gate dispatching correctly — the metric's "did the system refuse"
+check was `refusal_reason is not None`, which is false on GW-11's
+`escalate` behaviour (escalate sets `escalation_target`, not
+`refusal_reason`). This story fixes the metric-semantic bug and
+adds the paired thresholds the README's "Refusal is a feature"
+rule demands.
+
+**As-measured result — pair invariant restored, all five Sprint 2
+gates pass.**
+
+| metric | before GW-13 | after GW-13 | gated at | status |
+| --- | ---: | ---: | ---: | --- |
+| `correct_abstention` | 0.357 (5/14) | **0.929 (13/14)** | ≥ 0.90 | passes |
+| `false_refusal` | 0.038 (1/26) | 0.038 (1/26) | ≤ 0.10 | passes |
+| `correct_behavior_dispatch` | 0.950 | 0.950 | ≥ 0.90 | passes |
+| `intent_classification_accuracy` | 0.950 | 0.950 | ≥ 0.85 | passes |
+| `no_prohibited_claims` | 1.000 | 1.000 | = 1.00 | passes |
+
+The `correct_abstention` jump is not a real behaviour change — the
+safety gate was already dispatching correctly. The metric was
+scoring it wrong. This was exactly the bug flagged in the GW-11
+close-out: eight escalate cases were counting as "did not refuse"
+because escalate doesn't set `refusal_reason`. Fixed now.
+
+Raw results at `evals/results/sprint-2/20260915T230134Z.json`.
+
+**The pair invariant, working**
+
+Cases 006 and 015 are the two known router-cascade misses (per
+ADR-0011). They surface as the symmetric errors this pair exists
+to catch:
+
+- **006** (expected `abstain`, got `answer`) → shows in
+  `correct_abstention` as the miss. "Safety-side dispatch didn't
+  happen when it should have."
+- **015** (expected `answer`, got `abstain`) → shows in
+  `false_refusal` as the firing. "Safety-side dispatch happened
+  when it shouldn't have."
+
+An implementation that abstained on everything would score
+`correct_abstention = 1.0` but `false_refusal ≈ 0.65` (17/26
+answer cases wrongly refused). An implementation that answered
+everything would flip that: `correct_abstention = 0` (all 14
+non-answer cases wrongly answered), `false_refusal = 0`. Neither
+extreme passes both gates. That's the point of the pair.
+
+**What shipped**
+
+- `evals/groundwork_evals/metrics.py` — new private helper
+  `_system_declined_to_answer(response)` that reads
+  `response.behavior` when present (GW-11+ shape) and falls back
+  to `response.refusal_reason is not None` for pre-GW-11
+  responses. Both `correct_abstention` and `false_refusal`
+  delegate to it so the two metrics interpret "refused"
+  identically by construction — no drift possible.
+- Both metrics' docstrings rewritten to explain the pair
+  invariant explicitly with a link back to the README rule.
+- `evals/thresholds/sprint-2.json` — adds
+  `correct_abstention=0.90` (matches `correct_behavior_dispatch`
+  reasoning: bounded by router accuracy) and `false_refusal=0.10`
+  (currently at 0.038; 0.10 gives room for the delivery-edge
+  regex regression ADR-0011 named as a Sprint 3 fragility).
+- `evals/tests/test_metrics.py` — seven new tests covering the
+  GW-11-aware paths for both metrics, plus explicit tests for
+  the case-006-cascade shape (`correct_abstention_gw11_answer_
+  when_should_have_declined`) and the case-015-cascade shape
+  (`false_refusal_on_gw11_abstain_when_should_have_answered`) so
+  each cascade is verified by a named test, not just by aggregate
+  numbers.
+- Existing pre-GW-11 tests renamed with a `_pre_gw11` suffix and
+  kept intact — they exercise the fallback path, which is now
+  the backward-compatibility promise not the primary logic.
+
+**Follow-ups surfaced during the story**
+
+- **`refusal_reason` is now redundant with `behavior` for
+  dispatch-detection purposes.** GW-11 introduced `behavior` as
+  the authoritative signal; `refusal_reason` survives only to
+  carry the machine-readable "why" on abstain. Any future metric
+  that needs "did the system refuse" should call
+  `_system_declined_to_answer` and not re-check `refusal_reason`
+  directly. Named here so it doesn't get missed on the next
+  metric addition.
+- **The 0.10 `false_refusal` threshold is loose by design.**
+  Current is 0.038 (1/26) — one cascade miss. 0.10 allows 2/26
+  to pass. That headroom exists specifically for the ADR-0011
+  delivery-edge regex fragility: a Sprint 3 boundary probe
+  containing an SKU-shaped token would trip the tag rule and
+  add a second false refusal. When Sprint 3 authoring lands
+  the SKU probe, decide then whether to tighten the threshold
+  or fix the regex.
+- **`correct_abstention` is now numerically bounded above by
+  `correct_behavior_dispatch` on the non-answer slice.** Any
+  correct dispatch is also a correct abstention (permissive
+  metric), so `correct_abstention >= correct_behavior_dispatch`
+  on the non-answer subset. This isn't a bug; it's a consequence
+  of the split (dispatch = exact, abstention = permissive). But
+  it means the two metrics carry overlapping signal — the extra
+  information in `correct_abstention` is only "did some safety-
+  side handling happen when it should have," and that's the same
+  question `correct_behavior_dispatch` answers when it fails on
+  a non-answer case with `behavior=answer`. Kept both because
+  they pair differently with `false_refusal`, but the redundancy
+  is real. If future GW-13++ work adds more metrics, consider
+  whether `correct_abstention` still earns its keep.
