@@ -214,6 +214,35 @@ as plausible but aren't grounded in the text, stop and surface it
 rather than tightening the prompt to look right. That failure mode is
 the whole reason for the source-span requirement.
 
+### Fixtures ready for later stories (no build this sprint)
+
+Two pieces of the synthetic order + catalogue data are structured so
+that Sprint 2–3 stories can pick them up without rework. Noting here
+so the fixture support is discoverable and so nobody re-invents it.
+
+**Delivery-zone (GW-21 prep).** The catalogue has 105 products tagged
+`local-delivery-only` (84 Feed, 8 Bedding, 6 Haylage, 7 other). This
+is a real NFCS business rule, not synthetic — the tag is set on the
+production catalogue export. The synthetic orders enforce the rule:
+16 orders in `data/synthetic/orders.jsonl` have at least one
+`local_delivery_only: true` line and a delivery district outside the
+served radius; those are forced to `delivery_method: "collection"`.
+When GW-21 (delivery-zone tool) builds, that 16-order subset is the
+fixture data for the tool's collection-only rule — no need to invent
+cases. The served districts named in `scripts/generate_orders.py`
+match the postcodes that appear in customer messages.
+
+**"Their usual" (Sprint 2+ candidate, no story yet).** The synthetic
+order history models four client archetypes (regular, occasional,
+at-risk, one-off) mirroring the production hub's segmentation. 49 of
+60 clients are repeat buyers with staple baskets — deliberately so,
+so a frequency-then-recency product-suggestion tool has meaningful
+fixture data on day one rather than a one-row lookup. Not on the
+Sprint 1 board; noting here so if a story lands later the data is
+already shaped. If we skip it altogether, no cost — the archetype
+weights in the generator can be tuned to whatever a future ADR
+justifies.
+
 ### Didn't ship
 - (Nothing outstanding from this sprint prep.)
 
