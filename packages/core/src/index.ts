@@ -2,6 +2,8 @@ export { NotImplementedError } from './errors.js';
 export { EMBEDDING_MODEL, EMBEDDING_DIM } from './embedding.js';
 
 export type { Retriever, RetrievalQuery, RetrievedChunk } from './ports/retriever.js';
+export { INTENTS } from './ports/router.js';
+export type { Intent, Router, RouterQuery, RouterDecision } from './ports/router.js';
 export type {
   LanguageModel,
   CompletionRequest,

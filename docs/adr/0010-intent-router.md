@@ -132,21 +132,30 @@ Rules hit → `matched: 'rule'`, `confidence: 1.0`, `rationale:
 'matched pattern: <name>'`.
 
 **2. LLM classifier.** Only reached if the rules pass didn't match.
-Small, cheap model (Haiku 4.5 or equivalent) with a system prompt
-that:
+Small, cheap model (`gpt-4o-mini`, already ADR-0004-committed for
+attribute extraction; same size class, no new dependency) with a
+system prompt that:
 
-- Enumerates the six labels and gives 2–3 exemplars each drawn from
-  the golden set.
-- Includes the disambiguation cases that are hardest for a bare
-  classifier: welfare-masquerading-as-product ("Do you sell
-  something for my horse's colic" → `welfare-clinical`, not
-  `product`), product-vs-fit ("Do you sell Rhinegold boots" →
-  `product`; "What size Rhinegold boots for a UK 5" → `fit`).
+- Enumerates the six labels with a one-paragraph definition each
+  and 1–2 **invented** exemplars per label that illustrate the
+  intent boundary. Exemplars are *not* drawn from the golden
+  dataset. Using golden cases as exemplars would be textbook
+  test-set contamination — the pre-tuning measurement would
+  inflate mechanically rather than reflect the classifier's
+  ability to generalise the boundary. The prompt teaches the
+  distinctions, not the answers.
+- Includes explicit boundary guidance for the four hardest
+  fit-vs-welfare / product-vs-welfare / product-vs-fit /
+  product-vs-logistics cuts, stated as principles rather than as
+  case-specific rules ("does the query describe conformation or
+  health state?" rather than "if the query mentions withers,
+  return X").
 - Constrained output: single JSON object `{intent, confidence,
-  rationale}`. Rejected outputs (invalid label, malformed JSON)
-  fall through to a hard default of `out-of-scope`, which is the
-  *safest* default because it stops retrieval and hands off to
-  GW-11's decline path.
+  rationale}` via OpenAI structured outputs (`json_schema` strict
+  mode). Rejected outputs (invalid label, malformed JSON,
+  network error) fall through to a hard default of
+  `out-of-scope`, which is the *safest* default because it stops
+  retrieval and hands off to GW-11's decline path.
 
 The LLM classifier is the fallback, not the primary, deliberately.
 Reasons:
