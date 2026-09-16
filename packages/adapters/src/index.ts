@@ -10,6 +10,7 @@ export { rrf, weightedFusion, type FusionInput, type FusionStrategy } from './re
 export { StubLanguageModel } from './language-model/stub-language-model.js';
 export { StubToolRegistry } from './tool-registry/stub-tool-registry.js';
 export { StubTraceSink } from './trace-sink/stub-trace-sink.js';
+export { NoopPlanner } from './planner/noop-planner.js';
 export { StubCatalogueRepository } from './catalogue-repository/stub-catalogue-repository.js';
 export { NoopReranker } from './reranker/noop-reranker.js';
 

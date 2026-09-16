@@ -158,10 +158,7 @@ async function preflightSourceIds(
   const uniqueIds = [...idToCases.keys()];
   if (uniqueIds.length === 0) return;
 
-  const { data, error } = await supabase
-    .from('chunks')
-    .select('id')
-    .in('id', uniqueIds);
+  const { data, error } = await supabase.from('chunks').select('id').in('id', uniqueIds);
   if (error) {
     throw new Error(`preflight chunks query failed: ${error.message}`);
   }
@@ -174,9 +171,7 @@ async function preflightSourceIds(
   }
 
   if (missing.length === 0) {
-    console.error(
-      `Preflight: all ${uniqueIds.length} unique required_source_ids exist in chunks.`,
-    );
+    console.error(`Preflight: all ${uniqueIds.length} unique required_source_ids exist in chunks.`);
     return;
   }
 
@@ -199,9 +194,7 @@ async function preflightSourceIds(
   console.error(
     '\nFix: rerun the reconciler against the current corpus, then rerun this experiment.',
   );
-  console.error(
-    '  set -a && source .env.local && set +a',
-  );
+  console.error('  set -a && source .env.local && set +a');
   console.error(
     '  evals/.venv/bin/python evals/scripts/reconcile_source_ids.py --dry-run    # preview',
   );

@@ -26,6 +26,20 @@ export type {
   ToolInvocation,
   ToolResult,
 } from './ports/tool-registry.js';
+export type {
+  Planner,
+  PlannerContext,
+  PlannerDecision,
+  ToolInvocationRecord,
+} from './ports/planner.js';
+export {
+  runToolLoop,
+  type ToolLoopDeps,
+  type ToolLoopInput,
+  type ToolLoopOptions,
+  type ToolLoopResult,
+  type ToolLoopTermination,
+} from './tool-loop.js';
 export type { TraceSink, Span, SpanKind } from './ports/trace-sink.js';
 export type {
   CatalogueRepository,

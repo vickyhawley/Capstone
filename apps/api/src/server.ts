@@ -1,4 +1,9 @@
-import { RulesSafetyGate } from '@groundwork/adapters';
+import {
+  NoopPlanner,
+  RulesSafetyGate,
+  StubToolRegistry,
+  StubTraceSink,
+} from '@groundwork/adapters';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { createAboutRoute } from './about.js';
@@ -78,13 +83,17 @@ app.get('/api/stream/demo', (c) => {
 // Public info; rides the shared rate-limit middleware.
 app.route('/api/about', createAboutRoute());
 
-// POST /api/answer — Sprint 2 shape (GW-10 + GW-11 landed).
-// Route is registered once; deps are built lazily on first request
+// POST /api/answer — Sprint 3 shape (GW-10, GW-11, GW-12, GW-18 landed).
+// Route is registered once; the router is built lazily on first request
 // inside the handler so a missing OPENAI_API_KEY produces a 500 with
 // a clear message rather than an import-time crash the deploy log
-// buries. The safety gate has no async construction cost so it's
-// built once eagerly.
+// buries. Everything else has no async construction cost so it's built
+// once eagerly. Tool loop (GW-18) uses NoopPlanner + StubToolRegistry
+// until GW-20/21/22 register real tools + GW-24 wires a real planner.
 const eagerSafetyGate = new RulesSafetyGate();
+const eagerPlanner = new NoopPlanner();
+const eagerToolRegistry = new StubToolRegistry();
+const eagerTraceSink = new StubTraceSink();
 app.route(
   '/api/answer',
   createAnswerRoute({
@@ -95,5 +104,8 @@ app.route(
       },
     },
     safetyGate: eagerSafetyGate,
+    planner: eagerPlanner,
+    toolRegistry: eagerToolRegistry,
+    traceSink: eagerTraceSink,
   }),
 );
