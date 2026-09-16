@@ -1538,3 +1538,133 @@ Saracens) so counts as one slot filled twice.
   `~/.claude/projects/-Users-vixhawley-Capstone/memory/project_nfcs_substitute_clusters.md`
   — future GW-17b or GW-19 work should read that memory before
   authoring new substitute cases.
+
+### Sparse fix + hybrid rematch close-out (2026-09-16)
+
+**Story:** Sprint 1 carry-over #9. Replace `plainto_tsquery`
+(AND-semantics — sparse recall@10 = 5.6% in Sprint 1) with an
+OR-chained form, rerun the retrieval baseline, populate the
+Sprint 2 row of the four-sprint table. Also known as "the fusion
+comparison that Sprint 1 couldn't measure."
+
+**As-measured result — sparse fix worked, hybrid > dense.**
+
+| config           | recall@5 | recall@10 | nDCG@10 | p50 ms | vs Sprint 1 |
+| ---------------- | -------: | --------: | ------: | -----: | --- |
+| Sprint 1 dense   |    83.3% |     94.4% |   62.4% |    232 | baseline |
+| Sprint 2 dense   |    88.9% |    100.0% |   65.1% |    217 | reconciled IDs, not directly comparable |
+| Sprint 2 sparse  |    83.3% |     88.9% |   53.2% |     41 | up from 5.6% recall@10 — fix worked |
+| **Sprint 2 hybrid-rrf** | **94.4%** | **100.0%** | **65.7%** | 218 | **first real hybrid measurement, beats dense-only by 5.5pt recall@5** |
+| Sprint 2 hybrid-weighted | 94.4% | 100.0% | 65.6% | 218 | ties RRF; RRF wins on parameter count |
+
+Full four-sprint table lives in `docs/adr/0001-hybrid-retrieval.md`
+Sprint 2 addendum. Raw results in
+`evals/results/sprint-1/retrieval-baseline.md` (overwritten by the
+rerun — the ADR-0001 addendum captures the historical Sprint 1 row).
+
+**Stopping-rule outcome — hybrid-rrf ships.**
+
+Sprint 1's ADR-0001 addendum said "fusion code stays behind the
+port for the Sprint 2 rematch." Under the ADR's stopping rule
+("hybrid ships if it improves recall@k by ≥3pt over the baseline")
+hybrid-rrf's 5.5pt gain on recall@5 promotes it from
+behind-the-port to the shipped path. Sprint 2's retrieval path is
+now hybrid-rrf, not dense-only.
+
+RRF ties weighted on this dataset; ADR's tie-breaker rule ("gap
+< 3pt, default to RRF — fewer parameters, one less thing to tune")
+picks RRF. Weighted stays available in the codebase but is not
+the default.
+
+**What shipped**
+
+- `supabase/migrations/003_sparse_or_semantics.sql` — the OR-chain
+  replacement for `search_chunks_sparse`. Same RPC signature so
+  adapter code unchanged. Each customer-query word passes through
+  `plainto_tsquery` individually and gets `||`-combined; hostile
+  operator tokens (`&`, `|`, `!`, `(`, `)`) remain lexemes rather
+  than becoming tsquery operators. Applied to Supabase via SQL
+  editor 2026-09-16.
+- `evals/scripts/reconcile_source_ids.py` — new re-runnable
+  reconciler for the stale-UUID problem discovered mid-story
+  (see below). Reads each case's declared retrieval target
+  (product handle or guide slug + section), looks up current
+  chunk IDs, rewrites the JSONL. Section-specific mappings
+  preserve Sprint 1's granularity where possible.
+- `evals/datasets/sprint-1/cases.jsonl` — 18 cases with
+  reconciled `required_source_ids`. Old UUIDs replaced with
+  current ones. Cases 017–020 gained the "superseded-policy"
+  chunk as a legitimate retrieval target (slight permissiveness
+  increase, called out in the ADR-0001 addendum).
+- `evals/results/sprint-1/retrieval-baseline.md` — regenerated
+  by the rerun.
+- `docs/adr/0001-hybrid-retrieval.md` — new Sprint 2 addendum
+  with the four-sprint table populated for Sprint 2, stopping-
+  rule outcome recorded, both Sprint 1 implementation findings
+  marked resolved.
+- `docs/ai-assisted-development.md` — new Sprint 2 entry
+  documenting the stale-UUID discovery as the third instance of
+  the GW-01 / GW-10 "plausible output, no underlying signal"
+  family. Includes a rule for reference fields (companion to
+  the GW-11 rule for numeric fields) and a Sprint 3+ candidate:
+  switch chunk IDs from `gen_random_uuid()` to a deterministic
+  hash of `(document_id, ordinal, content_hash)`.
+
+**The unexpected third instance of the failure family**
+
+Applied the migration, verified sparse worked via a direct SQL
+smoke test (`select ... from search_chunks_sparse('how much are
+your shavings', 5)` returned 5 rows). Reran `pnpm retrieve`.
+Every configuration — dense, sparse, hybrid-rrf, hybrid-weighted
+— scored **0.0%** recall. Including dense, which the migration
+didn't touch.
+
+Diagnosis: the `required_source_ids` in the golden set pointed at
+chunk UUIDs that no longer existed in the current corpus. The
+corpus had been re-ingested at some point since Sprint 1 (most
+likely as part of GW-01's embedding fold-in in commit `8d87bae`),
+and `gen_random_uuid()` gave every chunk a fresh ID. The recall
+computation was correct; it was comparing against invalidated
+ground truth.
+
+**Same shape as GW-01 and GW-10:** the number is truthful but
+doesn't measure what the reader thinks it measures. Third
+instance in three sprints. Full write-up in
+`docs/ai-assisted-development.md` — the rule generalises: not
+just numeric fields need calibration before load-bearing use,
+reference fields (UUIDs, IDs, chunk pointers) need existence
+verification.
+
+**Follow-ups surfaced during the story**
+
+- **Deterministic chunk IDs (Sprint 3+ candidate).** Hash of
+  `(document_id, chunk_ordinal, content_hash)` would make the
+  golden set resilient to re-ingest. Deferred; the reconciler
+  unblocks Sprint 2's measurement need but is a workaround.
+- **Preflight check in the retrieval-experiment CLI.** Before
+  scoring, verify every `required_source_id` in the loaded
+  dataset actually exists in `chunks`. Fail loudly with the
+  count of stale IDs. Would have caught this in 30 seconds
+  instead of a full baseline rerun. Small plumbing fix.
+- **Case 007 (`purple-horsehage`) still exposes the trade-synonym
+  gap.** Sparse recall on 007 was still 0 (customer says "purple",
+  catalogue says "Timothy"; the OR-chain matches "cost" and
+  "bale" but neither is uniquely on the Timothy chunk). Dense
+  gets it in top-10. This is unchanged from Sprint 1 and ADR-0009
+  (synonym dictionary) remains the Sprint 3 candidate.
+- **Reranker spike (Sprint 1 carry-over #10) — still not started.**
+  Same rationale as Sprint 1: no metrics measured for reranker
+  yet, ADR's noop-ships fallback applies. Sprint 3 opens the
+  reranker comparison per the ADR-0001 addendum's already-recorded
+  Sprint 3 sequence.
+
+**Sprint 2 status update**
+
+With hybrid-rrf promoted to the shipped path, Sprint 2's
+retrieval-side story is now complete. The Sprint 1 note "hybrid
+was compared against dense-plus-nothing" is discharged. Every
+Sprint 1 finding has an outcome: #1 (NULL embeddings) resolved
+by GW-01 fold-in, #2 (AND semantics) resolved by migration 003,
+#3 (guide gaps) recorded for Sprint 3, #4 (three-state stock
+coverage) partially addressed by GW-17, #5 (`plainto_tsquery`
+finding) same as #2.

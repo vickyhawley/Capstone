@@ -548,3 +548,130 @@ top-10 for 17 of 18 scored answer cases. That's not the ceiling —
 Sprint 2 has an actionable list of things that could each lift the
 number — but it's a real number the design document can carry into
 the next iteration.
+
+---
+
+## Addendum — Sprint 2 rematch (2026-09-16)
+
+Sprint 2 resolved finding #2 (`plainto_tsquery` AND semantics) and
+reran the four-configuration baseline. First real hybrid-vs-dense
+measurement in this project.
+
+### The four-sprint baseline table
+
+Format is append-only; Sprint 3 adds a row when the reranker spike
+lands. All numbers computed on cases with populated
+`required_source_ids` — 18 cases in the Sprint 2 rematch, same
+denominator as Sprint 1.
+
+| sprint | config           | recall@5 | recall@10 | nDCG@10 | p50 ms | p95 ms | notes |
+| ------ | ---------------- | -------: | --------: | ------: | -----: | -----: | ----- |
+| 1      | dense (shipped)  |    83.3% |     94.4% |   62.4% |    232 |    523 | sparse returning empty; hybrid uncomparable. |
+| 2      | dense            |    88.9% |    100.0% |   65.1% |    217 |    377 | reconciled source_ids (see below), not directly comparable to sprint 1 dense. |
+| 2      | sparse           |    83.3% |     88.9% |   53.2% |     41 |     50 | up from 5.6% recall@10 in sprint 1 — sparse fix worked. |
+| 2      | **hybrid-rrf**   |    **94.4%** | **100.0%** | **65.7%** |    218 |    283 | first real hybrid measurement; beats dense-only by 5.5pt recall@5. |
+| 2      | hybrid-weighted  |    94.4% |    100.0% |   65.6% |    218 |    261 | ties hybrid-rrf on this dataset; RRF wins on parameter count. |
+
+### Stopping-rule outcome — hybrid > dense, RRF wins fusion
+
+- **Fusion.** RRF and weighted tie on recall@5, recall@10, nDCG@10.
+  Under the ADR's rule ("gap < 3pt, default to RRF"), **RRF ships as
+  the fusion strategy for Sprint 2 and beyond.**
+- **Hybrid vs dense.** Hybrid-rrf beats dense-only by 5.5pt on
+  recall@5 (94.4% vs 88.9%). Under the stopping rule threshold for
+  hybrid promotion ("improves recall@k by ≥3pt over the shipped
+  baseline"), **hybrid-rrf is promoted from behind-the-port to the
+  shipped path.** The Sprint 1 recommendation ("ship dense-only")
+  is superseded: **Sprint 2 ships hybrid-rrf.**
+- **Latency cost of hybrid.** Hybrid p50 = 218ms vs dense-only p50 =
+  217ms — sparse (41ms p50) runs in parallel with dense in the
+  hybrid retriever's implementation, so hybrid's latency floor is
+  dense's floor. Within budget by an order of magnitude.
+
+### Finding resolutions
+
+- **Finding #1 (chunks.embedding NULL) — resolved in Sprint 2** via
+  `8d87bae` (ingest fold-in). GW-01 lesson written up in
+  `docs/ai-assisted-development.md`.
+- **Finding #2 (plainto_tsquery AND semantics) — resolved in Sprint
+  2** via migration `003_sparse_or_semantics.sql` (commit `4cc6bd4`).
+  Each customer-query word is now passed through `plainto_tsquery`
+  individually and OR-combined with the `||` tsquery operator.
+  Rerun confirms sparse recall@10 went from 5.6% to 88.9%.
+
+### Third instance of the "no underlying signal" family
+
+Rerunning the baseline after the sparse fix initially returned
+**0.0% recall across all four configurations** — including dense,
+which the migration didn't touch. Diagnosis (recorded in
+`docs/ai-assisted-development.md`): the corpus had been re-ingested
+at some point since the Sprint 1 baseline was locked (probably as
+part of the GW-01 embedding fold-in), and every re-ingest generates
+fresh `gen_random_uuid()` chunk IDs. The `required_source_ids` in
+the golden dataset pointed at UUIDs that no longer existed. The
+recall calculation had 18 cases to score against — and found 0
+matches for any of them.
+
+This is the third instance of the family GW-01 and GW-10 exposed:
+
+- **GW-01** — ingest reported 297 attributes stored, but every
+  `chunks.embedding` was NULL.
+- **GW-10** — LLM emitted `confidence` = 0.90 uniformly, no
+  calibration to whether the classification was correct.
+- **Sparse-fix rematch (this addendum)** — retrieval-experiment
+  reported recall percentages, but the ground-truth
+  `required_source_ids` were invalidated by an upstream ingest with
+  no signal to the dataset.
+
+Same shape all three times: **an artefact of pipeline shape
+that carries no underlying signal about pipeline behaviour.** The
+number is truthful (297 attributes really were extracted; the LLM
+really did emit 0.90; the recall really was 0.0%) but the number
+doesn't measure what the reader thinks it measures. The general
+rule from `docs/ai-assisted-development.md` (Sprint 2 entry —
+"any field a downstream consumer will threshold on gets a
+calibration check before the consumer is written") applies here
+too: any UUID a golden-set consumer will grep for should be
+verified against the current source-of-truth before the consumer
+runs. The sparse-fix rematch would have surfaced this on any
+retrieval run against any modified corpus.
+
+### Reconciliation and the "not apples-to-apples" caveat
+
+Fix: `evals/scripts/reconcile_source_ids.py` — a rerunnable
+reconciler that reads each case's declared retrieval target (product
+handle or guide slug + section), looks up the current chunk IDs from
+the deployed corpus, and rewrites the JSONL in place.
+
+Reconciled targets were made section-specific for guide-backed
+cases (rather than dumping every chunk of the guide) so recall
+numbers stay comparable-in-granularity to Sprint 1. Two small
+permissiveness increases were unavoidable:
+
+- Cases 017–020 (superseded-source cases) gained the
+  "Superseded policy" chunk as a valid retrieval target — Sprint 1
+  didn't include it, but the correct answer to a customer quoting
+  an old policy legitimately involves that chunk.
+- Case 020 gained the opening-hours "Superseded" chunk for the
+  same reason.
+
+Sprint 1 → Sprint 2 dense delta (83.3% → 88.9% recall@5) is
+therefore partly reconciliation-permissiveness, partly real. Within
+Sprint 2, dense vs sparse vs hybrid comparisons are on the same
+reconciled dataset and are apples-to-apples.
+
+### What ships from this rematch
+
+- **Hybrid-rrf becomes the default retrieval configuration.** The
+  Sprint 1 note "fusion code stays behind the port for the Sprint 2
+  rematch" is now discharged: fusion is in the shipped path.
+- **RRF wins fusion.** Weighted stays available but ties on this
+  dataset; RRF is simpler.
+- **Reranker spike still deferred to Sprint 3** — same rationale
+  as Sprint 1 addendum (ADR's fallback rule triggers when zero
+  metrics have cleared for the reranker treatment; nothing was
+  measured for reranker in Sprint 2 either).
+- **ADR-0009 (synonym dictionary)** — case 007 was still in the
+  Sprint 2 misses on the sparse config (0.83 recall — one case
+  short of 100%). The trade-synonym gap is unchanged, and adding
+  synonyms remains a Sprint 3 candidate.

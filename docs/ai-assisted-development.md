@@ -336,3 +336,107 @@ it. This applies as strongly to model-generated fields (`confidence`,
 The check is cheap. Skipping it is what let GW-01 ship with NULL
 embeddings and what would have let GW-11 ship with a confidence
 threshold that gated nothing.
+
+### Sprint 2 — 2026-09-16 — sparse-fix rematch: stale UUIDs, third instance of the family
+
+Third instance of the same failure family in three sprints of work.
+Recording it here so the pattern is visible as *a class of thing
+that recurs across pipeline boundaries*, not as three unrelated
+coincidences.
+
+- **The setup.** Sprint 2 landed migration 003 to fix the
+  `plainto_tsquery` AND-semantics failure that Sprint 1 had
+  measured as sparse recall@10 = 5.6%. Migration verified
+  behaviourally by a direct SQL smoke test — a customer-query-
+  shaped call to `search_chunks_sparse('how much are your shavings', 5)`
+  returned 5 rows with OR-semantics working as designed.
+- **The rerun.** Ran `pnpm --filter @groundwork/retrieval-experiment
+  retrieve` to regenerate the baseline. Every configuration —
+  dense, sparse, hybrid-rrf, hybrid-weighted — scored **0.0%
+  recall@5 and 0.0% recall@10**. Including dense, which the
+  migration didn't touch.
+- **What the field actually was.** Recall computation: for each
+  case with populated `required_source_ids`, check if any of the
+  IDs appear in the retriever's top-k. If retrieval works but the
+  ground-truth IDs no longer exist in the database, recall is 0
+  across every configuration regardless of what the retriever
+  returns.
+- **The root cause.** Chunk IDs are `default gen_random_uuid()`
+  (see `supabase/migrations/001_initial_schema.sql`). Every
+  `pnpm ingest` regenerates them. The corpus had been re-ingested
+  at some point since the Sprint 1 baseline was populated (probably
+  as part of the GW-01 embedding fold-in, commit `8d87bae`), and
+  the 18 golden cases' `required_source_ids` now pointed at UUIDs
+  that no longer existed. Diagnosis took one SQL query: the first
+  UUID from `product-002-shavings-price.required_source_ids`
+  didn't exist in the `chunks` table; a chunk with the same text
+  ("# Bedmax Shavings...") existed under a different UUID.
+
+#### Failure family — third instance
+
+- **GW-01** — ingest reported "297 attributes stored across 120
+  documents"; every `chunks.embedding` was NULL.
+- **GW-10** — LLM classifier emitted `confidence = 0.90` on 40 of
+  40 cases; the field was uncorrelated with correctness.
+- **Sparse-fix rematch (this entry)** — retrieval-experiment
+  reported "recall@10 = 0.0%"; the recall calculation was correct
+  but the ground truth it compared against was pointing at
+  invalidated UUIDs.
+
+Same shape three times:
+
+- The reported number is truthful. 297 attributes really were
+  extracted. The LLM really did emit 0.90. The recall really
+  was 0.0%.
+- The number doesn't measure what the reader thinks it measures.
+  Attributes stored ≠ pipeline complete. Model-emitted number ≠
+  calibrated confidence. Recall against stale IDs ≠ retrieval
+  quality.
+- The failure surfaces only when a downstream consumer treats the
+  number as load-bearing and finds it doesn't hold up.
+
+**An artefact of the pipeline's shape is not the same as evidence
+about the pipeline's behaviour.**
+
+#### Rule that follows — from a different angle
+
+The GW-11 rule was about *numeric* fields ("plot against ground
+truth, verify monotone correlation"). This instance surfaces the
+same principle for *reference* fields — UUIDs, foreign keys,
+chunk IDs, any identifier a golden set uses to point at data
+outside the golden set:
+
+**Any identifier a golden-set consumer will grep for should be
+verified against the current source-of-truth before the consumer
+runs.** For UUIDs, that means: check the ID exists. If it
+doesn't, the consumer is measuring something else and the number
+means nothing.
+
+The reconciliation script (`evals/scripts/reconcile_source_ids.py`)
+now exists as the "run this before you trust the numbers"
+recovery. Better: make it a preflight check in the retrieval-
+experiment CLI itself — one query per required_source_id counting
+existence, fail loudly if any are missing. Deferred to Sprint 3
+because it's a plumbing fix, not a design decision.
+
+#### Why UUID identity is the wrong contract
+
+Deeper root cause: golden cases reference chunks by UUID, but
+UUIDs are generated fresh on every ingest. Alternatives that
+would prevent this class of failure at the schema layer:
+
+- **Deterministic chunk IDs.** Hash of `(document_id, chunk_ordinal,
+  content_hash)` rather than random UUID. Same ingest → same IDs;
+  re-ingest with same content → same IDs; content-changed chunks
+  get new IDs. Golden cases become resilient to re-ingest.
+- **Reference by (document, ordinal).** Golden cases store
+  `(document_source_ref, chunk_ordinal)` tuples instead of chunk
+  UUIDs. Reconciliation is a JOIN, not a UUID lookup.
+- **Structural reference by content anchor.** Golden cases store
+  a stable content excerpt (first ~80 chars, or a section title)
+  and the harness resolves to the current UUID at run time.
+
+Not chased in Sprint 2 — the reconciler unblocks the immediate
+measurement need, and the ADR-0001 addendum records the
+Sprint 3+ candidate. But it's the durable fix; the reconciler is
+a workaround for a schema-level design decision.
