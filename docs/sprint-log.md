@@ -1761,7 +1761,12 @@ The user brief is GW-18 through GW-26: tool port and function-
 calling loop, stock lookup, fit/sizing, delivery-zone check,
 tool-use disclosure in the UI, model tiering with cost capture,
 circuit breaker and degradation ladder, trace logging, staff
-console. Nine stories, the spine of the sprint.
+console. Nine stories, the spine of the sprint. GW-19 is
+substitute ranking per ADR-0005, distinct from GW-20 stock
+lookup (different question, different eval tag, different
+answer surface) — so the spine renumbers to GW-18, GW-20–GW-26
+= 8 tool-shaped stories, with GW-19 substitute-ranking as its
+own Sprint 3 story alongside.
 
 But three commitments come first:
 
@@ -1800,19 +1805,20 @@ pair, then the individual tools, then the operator surface
 
 | # | Story | Kind | Notes |
 | ---: | --- | --- | --- |
-| 1 | Deterministic chunk IDs | Sprint 2 promotion | ADR-0013. Compute chunk `id` at ingest time as a hash-cast UUID. `INSERT ... ON CONFLICT (id) DO UPDATE`. One-time transition run to swap existing IDs. Reconciler becomes a no-op verifier. |
+| 1 | Deterministic chunk IDs | Sprint 2 promotion | ADR-0013. Compute chunk `id` at ingest time as a hash-cast UUID. `INSERT ... ON CONFLICT (id) DO UPDATE`. One-time transition run to swap existing IDs. Reconciler + preflight become defence-in-depth verifiers that should stop firing on the common path. |
 | 2 | **GW-18 tool port + function-calling loop** | Sprint 3 spine | ADR-0014. `ToolRegistry` port already exists (stub since Sprint 0). Bounded iterations per ADR-0002. Structured errors returned to the model. Trace hooks wired. |
 | 3 | **GW-25 trace logging** | Sprint 3 spine | Persist every tool invocation (args, result, duration, trace ID). Depends on GW-18's dispatch shape. Ships alongside so tracing is native, not retrofit. |
-| 4 | **GW-20 stock lookup tool** | Sprint 3 spine | The load-bearing product-intent tool. Deterministic (against catalogue). Returns three-state stock plus substitute suggestion (subsumes ADR-0005 substitute-ranking work into the tool's return shape rather than as a separate story). |
-| 5 | **GW-22 delivery-zone check tool** | Sprint 3 spine | The load-bearing logistics-intent tool. Postcode → in / edge / out per the ADR-0007-style filter reasoning + delivery.md guide. Case 031 (Winchester SO22) is the canonical target. |
-| 6 | GW-21 fit/sizing tool | Sprint 3 spine | Guide-driven for jodhpurs / girth; attribute-schema-driven for supplements. Boots/hats still escalate to staff-service per ADR-0011. |
-| 7 | GW-24 model tiering + cost capture | Sprint 3 spine | Fast model for router (already using gpt-4o-mini per ADR-0001); Sonnet-tier for synthesis; cost captured in trace so per-turn cost is measurable, not estimated. |
-| 8 | GW-23 tool-use disclosure in UI | Sprint 3 spine | When a tool call fires, the UI surface shows "checked stock" / "verified delivery zone" as visible action. Complements GW-15's Article 50 disclosure — user sees what happened, not just that an AI happened. Depends on a UI being wired (still scaffold-only). |
-| 9 | GW-26 circuit breaker + degradation ladder + staff console | Sprint 3 spine | Wraps GW-18 execution. Circuit breaker on tool failures, structured fallback ladder (tool timeout → cached result → escalate to staff), staff console surfaces open circuits + degraded turns. |
-| 10 | Reranker spike | Sprint 1+2 carry-over | Deferred twice, ADR-0001 default-slots here. Dense-only vs +Cohere Rerank v3 vs +bge-reranker-base. Fits if there's room. |
-| 11 | ADR-0009 synonym dictionary (case 007) | Sprint 1+2 carry-over | Small targeted fix. Case 007 (purple/Timothy) is the canonical target. Would close a known 0.5pt recall@10 hole. |
-| 12 | Python harness preflight | Sprint 2 close-out follow-up | Same idea as retrieval-experiment preflight but for the Python side. Wraps Supabase calls or trusts the TS-side check has run first. |
-| 13 | GW-17 tag audit + GW-17b remaining shape gaps | Sprint 2 follow-up | Retrofit shape tags on cases 001–020 (pre-ADR-0005) + fill the 7 remaining shape/type slots once the shop pulls more DMs. |
+| 4 | **GW-20 stock lookup tool** | Sprint 3 spine | The load-bearing product-intent tool. Deterministic (against catalogue). Returns three-state stock: exact / orderable / unavailable. Does NOT surface substitutes — that's GW-19's job, run alongside not folded in. |
+| 5 | **GW-19 substitute ranking** | Sprint 3, ADR-0005 | Own story per user brief (2026-09-16): distinct question ("does the system surface the right substitute?"), distinct eval tag (`substitute-offered`), distinct real-traffic case (022, Haygates → HiLight). Runs when GW-20 returns "unavailable" or "orderable" — offers the equivalent NFCS holds. Chunk metadata already carries what the ranking needs (product type, vendor, comparable attributes, price band). |
+| 6 | **GW-22 delivery-zone check tool** | Sprint 3 spine | The load-bearing logistics-intent tool. Postcode → in / edge / out per the ADR-0007-style filter reasoning + delivery.md guide. Case 031 (Winchester SO22) is the canonical target. |
+| 7 | GW-21 fit/sizing tool | Sprint 3 spine | Guide-driven for jodhpurs / girth; attribute-schema-driven for supplements. Boots/hats still escalate to staff-service per ADR-0011. |
+| 8 | GW-24 model tiering + cost capture | Sprint 3 spine | Fast model for router (already using gpt-4o-mini per ADR-0001); Sonnet-tier for synthesis; cost captured in trace so per-turn cost is measurable, not estimated. |
+| 9 | GW-23 tool-use disclosure in UI | Sprint 3 spine | When a tool call fires, the UI surface shows "checked stock" / "verified delivery zone" as visible action. Complements GW-15's Article 50 disclosure — user sees what happened, not just that an AI happened. Depends on a UI being wired (still scaffold-only). |
+| 10 | GW-26 circuit breaker + degradation ladder + staff console | Sprint 3 spine | Wraps GW-18 execution. Circuit breaker on tool failures, structured fallback ladder (tool timeout → cached result → escalate to staff), staff console surfaces open circuits + degraded turns. |
+| 11 | Reranker spike | Sprint 1+2 carry-over | Deferred twice, ADR-0001 default-slots here. Dense-only vs +Cohere Rerank v3 vs +bge-reranker-base. Fits if there's room. |
+| 12 | ADR-0009 synonym dictionary (case 007) | Sprint 1+2 carry-over | Small targeted fix. Case 007 (purple/Timothy) is the canonical target. Would close a known 0.5pt recall@10 hole. |
+| 13 | Python harness preflight | Sprint 2 close-out follow-up | Same idea as retrieval-experiment preflight but for the Python side. Wraps Supabase calls or trusts the TS-side check has run first. |
+| 14 | GW-17 tag audit + GW-17b remaining shape gaps | Sprint 2 follow-up | Retrofit shape tags on cases 001–020 (pre-ADR-0005) + fill the 7 remaining shape/type slots once the shop pulls more DMs. |
 
 **GW-16 conversation memory — deferred to Sprint 4.** Same
 rationale as Sprint 2's deferral: it needs a multi-turn golden
@@ -1832,9 +1838,13 @@ Must ship or Sprint 3 has failed its thesis:
 - GW-18 tool port + function-calling loop (Story 2)
 - GW-25 trace logging (Story 3)
 - GW-20 stock lookup tool (Story 4)
-- GW-22 delivery-zone check tool (Story 5)
+- GW-19 substitute ranking (Story 5) — separate from GW-20:
+  "does the system surface the right substitute" is a distinct
+  question and case 022 (Haygates → HiLight) is a real-traffic
+  case that needs an answer, not a subsumed field
+- GW-22 delivery-zone check tool (Story 6)
 
-Without these five, the "assistant that does things" claim is
+Without these six, the "assistant that does things" claim is
 unsubstantiated. Everything else in the ordered list is defence-
 in-depth (GW-21 covers the fit corner but isn't load-bearing;
 GW-24 makes cost visible but doesn't gate anything; GW-23/26
@@ -1930,17 +1940,20 @@ list first, i.e. tag audit goes first, GW-25 goes last:
   story in Sprint 3, so it slips again to whenever the
   chunker's defaults become the bottleneck.
 
-### Story-number reconciliation flag
+### Story-number reconciliation — resolved 2026-09-16
 
 The user brief specified "GW-18 through GW-26" as the tool
 sprint spine — 9 stories. ADR-0005 references "GW-19
 (substitute ranking, Sprint 3)" as a separately-numbered story.
-This plan absorbs GW-19's substitute-ranking work into GW-20's
-stock lookup tool return shape (a stock query for an
-unavailable product returns "not held" plus substitute
-suggestion per ADR-0005's ranking rules) rather than treating
-substitute-ranking as its own story. That keeps the spine at
-9 stories matching the user's numbering. If the project board
-prefers GW-19 stays as a distinct story, the spine renumbers
-to GW-18, GW-20–GW-26 = 8 stories with GW-19 substitute as a
-Sprint 3 non-spine story. Flagging for the user.
+User confirmed 2026-09-16 in the plan-review pass: **GW-19
+stays distinct**, not subsumed into GW-20's stock-lookup return
+shape. Reasoning: it has its own ADR, its own eval tag
+(`substitute-offered`), and a real-traffic case (022, Haygates
+→ HiLight); folded in, it never gets measured separately, and
+"does the system surface the right substitute?" is a different
+question from "does the stock tool return the right state?"
+
+The spine renumbers to GW-18, GW-20–GW-26 = 8 tool-shaped
+stories with GW-19 substitute-ranking as its own Sprint 3
+story alongside. Reflected in the ordered stories table and
+non-negotiable core above.

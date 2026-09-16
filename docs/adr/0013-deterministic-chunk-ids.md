@@ -202,40 +202,73 @@ currently unused — every ingested chunk today has
 The unused self-reference means migration doesn't have to
 reconcile parent pointers.
 
-### The migration itself — three steps
+### The migration itself — one deliberate sequence, nothing else in flight
 
-1. **Ship the TS `computeChunkId` function** in
-   `packages/ingestion/src/persistence.ts`. Change the insert path
-   to pass explicit `id: computeChunkId(...)`. Use Supabase
-   `upsert({...}, { onConflict: 'id' })` so re-ingesting unchanged
-   content is idempotent.
+Truncate + re-ingest invalidates every `required_source_id` at
+once. Between the truncate and a successful reconcile, the golden
+set points at nothing and any consumer of source IDs sees the
+same "0.0% across every configuration" state the sparse-fix
+rematch discovered. A failed migration plus a half-reconciled
+dataset is the worst state to be in — it looks like a regression
+but is a housekeeping incident. So this runs as one deliberate
+sequence with nothing else touching the corpus or the eval
+harness in between.
 
-2. **One-time transition — destructive.** Operator runs a
-   truncate + full re-ingest:
+The sequence, in order, with a stop condition at each step:
+
+1. **Ship `computeChunkId`.** Add the function to
+   `packages/ingestion/src/persistence.ts`. Change the insert
+   path to pass explicit `id: computeChunkId(document_id,
+   ordinal, text)`. Use Supabase `upsert({...}, { onConflict:
+   'id' })` so re-ingesting unchanged content is idempotent by
+   design. Land the code change; do not run ingest yet. Verify
+   `pnpm --filter @groundwork/ingestion typecheck` + tests pass.
+
+2. **Truncate `chunks`.** Operator step, one SQL statement:
 
    ```sql
-   truncate chunks;   -- documents preserved; chunks rebuilt from them
-   ```
-
-   ```bash
-   pnpm ingest        # full re-ingest, new deterministic IDs assigned
+   truncate chunks;
    ```
 
    Destructive on `chunks` only. `documents` stays intact. The
-   `on delete cascade` on `documents.id` is not triggered because
-   we're truncating `chunks` directly, not deleting documents.
-   Embeddings are re-computed during re-ingest (the fold-in
-   shipped in Sprint 2 handles this in one pass).
+   `on delete cascade` on `documents.id` is not triggered
+   because we're truncating `chunks` directly, not deleting
+   documents.
 
-   At 500 chunks + embedding regeneration cost of ~$0.002 and
-   ~30s, this is bounded.
+3. **Re-ingest.** `pnpm ingest`. Every chunk gets a
+   deterministic ID from the function shipped in step 1.
+   Embeddings are re-computed (Sprint 2's fold-in handles this
+   in one pass). At 500 chunks + ~$0.002 and ~30s, this is
+   bounded. **Stop condition:** ingest reports the expected
+   chunk count and every chunk has a non-null embedding. If it
+   doesn't, do not proceed to step 4 — the golden set will be
+   reconciled against the wrong state.
 
-3. **Update the golden set once.** Run
-   `evals/scripts/reconcile_source_ids.py --apply` against the
-   new deterministic IDs. From this point forward, re-ingests
-   preserve IDs, so the reconciler becomes a no-op verifier —
-   its `summary: 0 case(s) changed` output is the durability
-   check.
+4. **Reconcile the golden set.**
+   `evals/scripts/reconcile_source_ids.py --apply`. Rewrites
+   `required_source_ids` against the new IDs. **Stop
+   condition:** the reconciler reports zero warnings. Any
+   warning means a golden case references a product handle or
+   guide section that no longer exists in the corpus, and that
+   needs an author decision before continuing.
+
+5. **Confirm the preflight passes.**
+   `pnpm --filter @groundwork/retrieval-experiment retrieve`
+   should print `Preflight: all N unique required_source_ids
+   exist in chunks.` If it doesn't, roll back mentally: the
+   reconciler in step 4 succeeded against IDs that step 3 did
+   not create. Investigate before continuing.
+
+6. **Only then continue.** Everything else — Sprint 3 story
+   work, harness runs, retrieval experiments — waits for the
+   preflight-passes signal in step 5. This is the "one
+   deliberate sequence, nothing else in flight" discipline: no
+   partial state is committed, no measurement is trusted until
+   the whole sequence has closed.
+
+From this point forward, re-ingests preserve IDs. The
+reconciler becomes a no-op verifier. Its `summary: 0 case(s)
+changed` output is the durability check.
 
 ### What the reconciler script becomes
 
@@ -263,6 +296,32 @@ The preflight added in Sprint 2 stays. Its role also changes:
   someone edited a guide, chunker parameters changed, a chunk
   disappeared. Signal is louder because it should be zero-fire
   on the common path.
+
+### The load-bearing → defence-in-depth transition
+
+After this ADR lands, **the reconciler and the preflight are
+defence-in-depth, not load-bearing.** They stay in the tree.
+They should stop firing on the common path.
+
+- **Reconciler expected behaviour:** `summary: 0 case(s)
+  changed` on every run. Non-zero output is a genuine content-
+  change signal — a guide was edited, a product was
+  re-catalogued, a chunker parameter shifted.
+- **Preflight expected behaviour:** silent pass on every run.
+  `Preflight: all N unique required_source_ids exist in chunks.`
+- **If preflight fires after this ADR ships, something else is
+  wrong.** Not a stale-UUID re-ingest problem (that class is
+  closed). Likely candidates: a chunk was deleted directly, a
+  document was removed, an ingest ran against a different
+  corpus, or the golden set has a stale reference the reconciler
+  should have caught. **Investigate; do not just re-run the
+  reconciler.** Automated re-reconcile would hide the underlying
+  event that changed the corpus.
+
+The "should stop firing" property is what makes this ADR worth
+building rather than just tolerating the reconciler +
+preflight indefinitely. Their continued firing after this ADR
+ships would be a signal that the ADR didn't do what it claims.
 
 ## Consequences
 
