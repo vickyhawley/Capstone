@@ -1668,3 +1668,72 @@ by GW-01 fold-in, #2 (AND semantics) resolved by migration 003,
 #3 (guide gaps) recorded for Sprint 3, #4 (three-state stock
 coverage) partially addressed by GW-17, #5 (`plainto_tsquery`
 finding) same as #2.
+
+### Preflight for stale source_ids (2026-09-16)
+
+**Story:** The first follow-up the sparse-fix close-out named as
+"small plumbing fix, high value." Extends the retrieval-experiment
+CLI with a preflight check that verifies every
+`required_source_id` in the loaded dataset exists in the `chunks`
+table before scoring begins. Prevents the failure mode we hit
+today from ever being a mystery again: a corpus re-ingest silently
+invalidates the golden set's UUIDs → recall drops to 0.0% across
+every configuration → operator has to diagnose from the outside.
+
+Now the operator sees:
+
+```
+Preflight: all 21 unique required_source_ids exist in chunks.
+```
+
+or, on failure:
+
+```
+PREFLIGHT FAILED: 1 of 22 required_source_ids do not exist in the
+current chunks table.
+Every retrieval score against these cases will be 0 — not because
+retrieval failed but because the ground truth is stale.
+Most likely cause: the corpus was re-ingested since these IDs were
+populated. Chunk IDs are gen_random_uuid() so ingest regenerates them.
+
+Missing IDs (first 20):
+  00000000-0000-0000-0000-deadbeefdead  used by: product-002-shavings-price
+
+Fix: rerun the reconciler against the current corpus, then rerun this experiment.
+  set -a && source .env.local && set +a
+  evals/.venv/bin/python evals/scripts/reconcile_source_ids.py --dry-run    # preview
+  evals/.venv/bin/python evals/scripts/reconcile_source_ids.py --apply      # write
+```
+
+Exit code 2 matches the runner's "configuration/dataset problem
+before scoring" convention.
+
+**Verified both paths.** Positive: run against the reconciled
+dataset, preflight passes silently and the experiment proceeds
+(0.0% wouldn't happen mysteriously). Negative: inject a bogus
+UUID into a case, run, get the PREFLIGHT FAILED message with
+the offending case_id + chunk_id and the fix pointer, exit 2.
+
+**What shipped**
+
+- `packages/retrieval-experiment/src/run-experiment.ts` — new
+  `preflightSourceIds(supabase, cases)` function called after
+  `loadCases` and before instantiating retrievers. One
+  `chunks` table query for all unique required IDs; set-diff
+  identifies missing ones; printout with fix instructions.
+
+**Doesn't ship (deferred):**
+
+- **Deterministic chunk IDs** (`sha256(document_id, ordinal,
+  content_hash)` instead of `gen_random_uuid()`) — still the
+  durable fix. Not chased this session because it changes the
+  schema, needs a data migration strategy, and reconciler +
+  preflight together cover the acute risk. Sprint 3 ADR
+  candidate.
+- **Same check in the Python harness.** The eval harness also
+  consumes `required_source_ids` (for `recall_at_k`) and would
+  silently score 0 with stale IDs. But it hits `/api/answer`,
+  not Supabase directly, so it can't do the existence check
+  itself — it'd have to either (a) call Supabase in a preflight
+  wrapper or (b) trust the retrieval-experiment CLI to have
+  run first. Deferred with a note here so the gap is visible.

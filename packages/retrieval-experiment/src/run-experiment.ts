@@ -127,6 +127,90 @@ function loadCases(path: string): readonly EvalCase[] {
   return cases;
 }
 
+// ---------- Preflight: verify required_source_ids exist in chunks ----------
+
+/**
+ * Verify that every `required_source_id` in the loaded dataset points
+ * at a chunk that currently exists in the database. Failing this check
+ * before running the experiment prevents the failure family recorded
+ * in `docs/ai-assisted-development.md` (Sprint 2 sparse-fix rematch
+ * entry): stale UUIDs from a corpus re-ingest produce 0.0% recall
+ * across every configuration because the recall calculation compares
+ * against IDs that no longer exist.
+ *
+ * On failure: print the count of missing IDs, list up to 20 by
+ * (case_id, chunk_id), point at the reconciler script, exit 2. Exit
+ * 2 matches the CLI convention "configuration/dataset problem before
+ * scoring" so operators can distinguish this from a real regression.
+ */
+async function preflightSourceIds(
+  supabase: SupabaseClient,
+  cases: readonly EvalCase[],
+): Promise<void> {
+  const idToCases = new Map<string, string[]>();
+  for (const c of cases) {
+    for (const id of c.required_source_ids) {
+      const list = idToCases.get(id);
+      if (list) list.push(c.id);
+      else idToCases.set(id, [c.id]);
+    }
+  }
+  const uniqueIds = [...idToCases.keys()];
+  if (uniqueIds.length === 0) return;
+
+  const { data, error } = await supabase
+    .from('chunks')
+    .select('id')
+    .in('id', uniqueIds);
+  if (error) {
+    throw new Error(`preflight chunks query failed: ${error.message}`);
+  }
+  const existing = new Set((data ?? []).map((row) => row.id as string));
+  const missing: { chunkId: string; caseIds: string[] }[] = [];
+  for (const id of uniqueIds) {
+    if (!existing.has(id)) {
+      missing.push({ chunkId: id, caseIds: idToCases.get(id) ?? [] });
+    }
+  }
+
+  if (missing.length === 0) {
+    console.error(
+      `Preflight: all ${uniqueIds.length} unique required_source_ids exist in chunks.`,
+    );
+    return;
+  }
+
+  console.error(
+    `\nPREFLIGHT FAILED: ${missing.length} of ${uniqueIds.length} required_source_ids do not exist in the current chunks table.`,
+  );
+  console.error(
+    'Every retrieval score against these cases will be 0 — not because retrieval failed but because the ground truth is stale.',
+  );
+  console.error(
+    'Most likely cause: the corpus was re-ingested since these IDs were populated. Chunk IDs are gen_random_uuid() so ingest regenerates them.\n',
+  );
+  console.error('Missing IDs (first 20):');
+  for (const m of missing.slice(0, 20)) {
+    console.error(`  ${m.chunkId}  used by: ${m.caseIds.join(', ')}`);
+  }
+  if (missing.length > 20) {
+    console.error(`  ... and ${missing.length - 20} more`);
+  }
+  console.error(
+    '\nFix: rerun the reconciler against the current corpus, then rerun this experiment.',
+  );
+  console.error(
+    '  set -a && source .env.local && set +a',
+  );
+  console.error(
+    '  evals/.venv/bin/python evals/scripts/reconcile_source_ids.py --dry-run    # preview',
+  );
+  console.error(
+    '  evals/.venv/bin/python evals/scripts/reconcile_source_ids.py --apply      # write',
+  );
+  process.exit(2);
+}
+
 // ---------- Experiment ----------
 
 const TOP_K = 10;
@@ -433,6 +517,8 @@ async function main(): Promise<void> {
 
   const cases = loadCases(casesPath);
   console.error(`Loaded ${cases.length} cases from ${casesPath}`);
+
+  await preflightSourceIds(supabase, cases);
 
   const dense = new PgvectorDenseRetriever(supabase, openai);
   const sparse = new PgTsRankRetriever(supabase);
