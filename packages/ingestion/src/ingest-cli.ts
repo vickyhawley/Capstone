@@ -266,7 +266,36 @@ interface IngestReport {
   colourAgreementSample: number;
   colourAgreementMatches: number;
   extractionErrors: number;
+  /**
+   * Count of embeddings COMPUTED in this run — one per chunk of every
+   * document processed, whether the persist path replaces chunks or
+   * short-circuits on unchanged content. Counts work the ingest DID,
+   * not work that landed.
+   */
   chunksEmbedded: number;
+  /**
+   * Count of chunks PERSISTED — i.e. chunks that are in the `chunks`
+   * table after the persist call, summed across every document
+   * processed. For the "unchanged" persist path, this counts chunks
+   * that were read back from an intact DB row set. For "inserted /
+   * updated / forced" paths, it counts freshly-inserted chunks.
+   *
+   * Invariant on a healthy run: `chunksPersisted >= chunksEmbedded`.
+   * `chunksEmbedded > chunksPersisted` is the shape of the GW-01
+   * failure family (embeddings computed but not stored) and today's
+   * det-IDs migration slip (chunks truncated, documents unchanged,
+   * "unchanged" path returned zero — see ADR-0013 §Consequences,
+   * "identity contract change requires --force").
+   *
+   * Sprint 1's Structural lesson recorded in ai-assisted-development.md:
+   * "The ingest report knew about attribute extraction because the
+   * extractor ran; it knew nothing about embeddings because nothing
+   * about embeddings was in the pipeline the report described." Same
+   * shape here: the report counted where the work was computed, not
+   * where it landed. Splitting fixes the class rather than the
+   * instance.
+   */
+  chunksPersisted: number;
   embeddingErrors: number;
 }
 
@@ -285,6 +314,7 @@ function newReport(): IngestReport {
     colourAgreementMatches: 0,
     extractionErrors: 0,
     chunksEmbedded: 0,
+    chunksPersisted: 0,
     embeddingErrors: 0,
   };
 }
@@ -360,6 +390,7 @@ async function main(): Promise<void> {
     };
     const result = await persistDocumentWithChunks(supabase, merged, persistOptions);
     tallyAction(result.action, report);
+    report.chunksPersisted += result.chunkIds.length;
   }
 
   // ---- Products ----
@@ -445,6 +476,7 @@ async function main(): Promise<void> {
     };
     const result = await persistDocumentWithChunks(supabase, merged, persistOptions);
     tallyAction(result.action, report);
+    report.chunksPersisted += result.chunkIds.length;
 
     if (productIndex % 25 === 0) {
       console.error(`[${productIndex}/${groups.size}] progressing…`);
@@ -465,9 +497,28 @@ async function main(): Promise<void> {
   console.log(`  forced:                ${report.documentsForced}`);
   console.log(`  unchanged:             ${report.documentsUnchanged}`);
   console.log('');
-  console.log('Chunk embeddings (ADR-0001, GW-01 embedding-gap fix)');
-  console.log(`  embedded:              ${report.chunksEmbedded}`);
-  console.log(`  errors:                ${report.embeddingErrors}`);
+  console.log('Chunks (ADR-0001 embeddings + ADR-0013 deterministic IDs)');
+  console.log(`  embedded (computed):   ${report.chunksEmbedded}`);
+  console.log(`  persisted (in DB):     ${report.chunksPersisted}`);
+  console.log(`  embedding errors:      ${report.embeddingErrors}`);
+  // Alarm when embedded > persisted. This is the shape of the GW-01
+  // failure family (embeddings computed but not stored) and the
+  // det-IDs migration slip (chunks truncated + docs unchanged made
+  // the persist path short-circuit). The report always showed
+  // "embedded: N" — until Sprint 3 2026-09-16 it did not show
+  // "persisted: 0" alongside it, so the divergence was silent.
+  if (report.chunksEmbedded > report.chunksPersisted) {
+    const orphaned = report.chunksEmbedded - report.chunksPersisted;
+    console.log('');
+    console.log(`  CRITICAL: ${orphaned} chunk embedding(s) computed but not persisted.`);
+    console.log(
+      '  This is the shape of the GW-01 failure family — work landed in a counter, not in the DB.',
+    );
+    console.log('  Likely cause: chunks table was cleared (truncate, migration) while');
+    console.log("  documents' content_hash values were unchanged, so persistence short-");
+    console.log('  circuited via the "unchanged" branch and never re-inserted.');
+    console.log('  Fix: rerun with `pnpm ingest -- --force`. See ADR-0013 §Consequences.');
+  }
   console.log('');
   console.log('Attribute extraction');
   console.log(`  products extracted:    ${report.productsExtracted}`);
@@ -507,6 +558,15 @@ async function main(): Promise<void> {
     // Note: we do NOT exit non-zero — the drops are the guardrail
     // working. The ADR says surface, not fail. Failing here would
     // prevent the ingest report from being read in CI logs.
+  }
+
+  // DO exit non-zero if the embed-vs-persist divergence fired. This
+  // is a genuine "the pipeline claims to have done X but X is not in
+  // the DB" failure — every downstream consumer will silently score
+  // wrong if the operator misses the stdout warning above. Exit code
+  // makes it script-visible.
+  if (report.chunksEmbedded > report.chunksPersisted) {
+    process.exit(1);
   }
 }
 

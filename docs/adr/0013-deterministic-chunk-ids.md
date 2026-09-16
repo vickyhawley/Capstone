@@ -352,6 +352,30 @@ ships would be a signal that the ADR didn't do what it claims.
   between old and new corpus is not detectable at truncate
   time). Mitigated by the small chunk count and the ~30s
   re-ingest cost.
+- **Negative — surfaced during the Sprint 3 migration run
+  (2026-09-16).** Any change to chunk identity — this ADR's
+  hash-based switch, or a future hash-algorithm change, or any
+  scheme that changes what makes a chunk "the same" —
+  invalidates existing chunk rows *without* changing the parent
+  document's text. Persistence's short-circuit path
+  (`packages/ingestion/src/persistence.ts` line 144-164)
+  compares `document.content_hash` against the DB row and skips
+  chunk replacement when they match. Under an identity-contract
+  change, the document text hasn't changed but the chunk IDs
+  need to. The default persist path will skip the replacement
+  and leave the chunks table in whatever state the migration
+  left it (empty, in this ADR's case). **The migration ingest
+  therefore requires the `--force` flag**
+  (`pnpm ingest -- --force`) to bypass the short-circuit. This
+  is not specific to this ADR; it's a general consequence of any
+  future change to chunk identity. Recorded here so the next
+  identity-contract change doesn't rediscover it the way this
+  one did — the runbook missed it, the persist call skipped
+  every document as "unchanged", the ingest report showed
+  `embedded: 417, persisted: 0` (post-fix; the pre-fix report
+  showed only `embedded: 417` and hid the divergence). The
+  ingest-report split shipped alongside this migration surfaces
+  the divergence loudly.
 
 ## Cases this does NOT solve
 

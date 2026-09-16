@@ -440,3 +440,65 @@ Not chased in Sprint 2 — the reconciler unblocks the immediate
 measurement need, and the ADR-0001 addendum records the
 Sprint 3+ candidate. But it's the durable fix; the reconciler is
 a workaround for a schema-level design decision.
+
+### Sprint 3 — 2026-09-16 — fourth instance: an already-known follow-up caused it
+
+Fourth instance of the "plausible output, no underlying signal"
+family. Recording it because the interesting part isn't that it
+happened — the shape is by now familiar — but that the gap had
+already been named and logged as a follow-up before it bit.
+
+The Sprint 1 close-out (2026-09-15) recorded, in this file at
+line 214, that "the ingest report claimed '297 attributes stored'.
+The report was a confident count of what the extractor *did* —
+correct. Nothing in the reporter's design checked what the
+extractor *should also have done*." That was the GW-01 lesson,
+and it named the general shape: **the report counts where the
+work was computed, not where it landed**.
+
+Today, mid-way through Sprint 3 Story 1's deterministic-chunk-IDs
+migration, the ingest ran, reported `embedded: 417` and
+`unchanged: 401` — and populated **zero chunks** in the
+just-truncated DB. Every embedding was computed. None was
+persisted. The migration would have gone silently wrong past step
+3, hit `PREFLIGHT FAILED` at step 5, and left the operator
+guessing at the cause.
+
+The counter was structurally identical to the one Sprint 1
+caught: `report.chunksEmbedded += embeddings.length` runs when
+the OpenAI call succeeds, before the persist call. The persist
+call's return value never fed back into the report. So the
+report saw work being done, not work landing.
+
+- **GW-01 (Sprint 1)** — extractor ran, embedder didn't; counter
+  saw the extractor.
+- **Sprint 3 story 1 (this entry)** — embedder ran, persist
+  short-circuited; counter saw the embedder.
+
+Same counter-shape both times. Splitting `chunksEmbedded`
+(computed) from `chunksPersisted` (in DB) shipped alongside the
+migration itself, so the pipeline now surfaces the divergence
+loudly (CRITICAL warning + exit 1) rather than only in whichever
+downstream consumer next reads what should be there. Closes the
+class of "counter incremented at work-computed instead of
+work-landed" for this pipeline.
+
+The general rule from Sprint 1 was **"a component is only
+verified by something downstream that consumes its output for
+real"**. This instance sharpens it: a counter is a component too.
+A counter that reports `+= N` when `N` items were generated but
+not persisted is verifying itself, not the pipeline. **Count
+where the work landed, not where it started.** Apply to any
+future counter that tallies pipeline output — one thing to check
+each time it's introduced.
+
+Follow-up-not-fixed shape recorded separately: the Sprint 1
+close-out's condensed findings prioritised the sparse-fix and
+the golden-set expansion; the ingest-report gap was in the
+"structural lesson" section and did not become a Sprint 2 or
+Sprint 3 story of its own. **A lesson recorded in
+ai-assisted-development.md is not a story on the backlog.** If
+the gap is worth closing, a backlog entry has to name it. Left
+in-file (no new backlog story) but noting so the pattern is
+visible: the file is where *understanding* lands, not where
+*work-to-do* lands.

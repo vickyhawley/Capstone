@@ -2057,14 +2057,31 @@ row level security` is not the answer, investigate instead).
 **Step 3 — re-ingest with new deterministic IDs.**
 
 ```bash
-pnpm ingest
+pnpm ingest -- --force
 ```
+
+`--force` is required, not optional (Sprint 3 2026-09-16
+correction). Deterministic IDs shift chunk identity without
+changing document text. Persistence's default path short-
+circuits when a document's `content_hash` is unchanged; without
+`--force`, the ingest reads back the (now-empty) chunks table
+and returns without inserting anything. Report will show
+`embedded: 417, persisted: 0` and exit non-zero with a
+CRITICAL warning — the ingest-report split shipped alongside
+this correction (see ADR-0013 §Consequences).
 
 Every chunk gets a deterministic ID via step 1's code.
 Embeddings are re-computed (Sprint 2's fold-in handles this).
 Expect ~30s runtime + ~$0.002 at 500-chunk scale.
 
-Verify:
+Verify (report line, then SQL):
+
+```
+Chunks (ADR-0001 embeddings + ADR-0013 deterministic IDs)
+  embedded (computed):   <N>
+  persisted (in DB):     <N>       ← must equal embedded
+  embedding errors:      0
+```
 
 ```sql
 select count(*) as chunks, count(embedding) as with_embedding
@@ -2072,28 +2089,49 @@ from chunks;
 -- expect chunks = with_embedding, both non-zero
 ```
 
-Also spot-check that IDs look deterministic — pick any product
-handle and query twice, IDs should be identical:
+Also spot-check that IDs look deterministic. From a shell with
+the env sourced, this recomputes the expected hash in Python
+and compares against the DB:
 
-```sql
-select c.id
-from chunks c
-join documents d on d.id = c.document_id
-where d.source_ref = 'aubiose-hemp-bedding'
-order by c.ordinal;
+```bash
+DOC_ID=$(curl -s "$SUPABASE_URL/rest/v1/documents?select=id&source_ref=eq.bedmax-shavings" \
+  -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  | evals/.venv/bin/python -c "import json,sys; print(json.load(sys.stdin)[0]['id'])")
+curl -s "$SUPABASE_URL/rest/v1/chunks?select=id,document_id,ordinal,text&document_id=eq.$DOC_ID&order=ordinal" \
+  -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  | evals/.venv/bin/python -c "
+import json, sys, hashlib
+for r in json.load(sys.stdin):
+    combined = f\"{r['document_id']}:{r['ordinal']}:{hashlib.sha256(r['text'].encode()).hexdigest()}\"
+    hx = hashlib.sha256(combined.encode()).hexdigest()[:32]
+    expected = f'{hx[0:8]}-{hx[8:12]}-{hx[12:16]}-{hx[16:20]}-{hx[20:32]}'
+    print(f\"ord={r['ordinal']}  {'MATCH' if expected==r['id'] else 'MISMATCH'}\")
+"
 ```
+
+Every row must report MATCH.
 
 Wrong looks like:
 
-- Chunk count differs materially from before (chunker parameters
-  drifted — inspect the diff of `packages/ingestion/src/`
-  between now and Sprint 2 close).
-- `with_embedding < chunks` (embedding fold-in regressed —
+- **Report shows `embedded > persisted` and CRITICAL warning
+  fires:** the `--force` flag wasn't passed (or another cause
+  of the short-circuit). Re-run with `pnpm ingest -- --force`.
+- **Chunk count differs materially from pre-truncate** (chunker
+  parameters drifted — inspect the diff of
+  `packages/ingestion/src/` between now and Sprint 2 close).
+- **`with_embedding < chunks`** (embedding fold-in regressed —
   investigate before continuing; without embeddings, dense
   retrieval will score 0 in step 6 and give you a false
   regression signal).
-- Ingest CLI errored partway through — see "if it goes half-
-  done" below.
+- **Determinism spot-check reports MISMATCH:** the
+  `computeChunkId` function doesn't match what the DB is
+  storing. Biggest possible red flag — do not proceed;
+  inspect the persistence code path against the ADR-0013
+  hash spec.
+- **Ingest CLI errored partway through** — see "if it goes
+  half-done" below.
 
 ---
 
