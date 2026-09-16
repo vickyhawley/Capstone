@@ -1,6 +1,6 @@
 # Sprint 1 retrieval baseline
 
-Run at 2026-09-16T09:09:22.510Z. See 
+Run at 2026-09-16T12:15:30.001Z. See 
 `docs/adr/0001-hybrid-retrieval.md#addendum` for interpretation.
 
 Four configurations, all with the noop reranker as the control.
@@ -13,10 +13,10 @@ stopping rule accordingly.
 | config | recall@5 | recall@10 | nDCG@10 | p50 ms | p95 ms |
 <!-- nDCG@10 matches evals/groundwork_evals/metrics.py `retrieval_relevance` — binary relevance, log-position discount. An earlier version of this report labelled precision@10 as "relevance"; that mismatched the harness. Fixed. -->
 | --- | ---: | ---: | ---: | ---: | ---: |
-| dense | 88.9% | 100.0% | 65.1% | 217 | 279 |
-| sparse | 83.3% | 88.9% | 53.2% | 45 | 60 |
-| hybrid-rrf | 94.4% | 100.0% | 65.7% | 228 | 344 |
-| hybrid-weighted | 94.4% | 100.0% | 65.6% | 219 | 241 |
+| dense | 88.9% | 100.0% | 65.1% | 235 | 459 |
+| sparse | 83.3% | 88.9% | 54.1% | 56 | 72 |
+| hybrid-rrf | 100.0% | 100.0% | 65.6% | 244 | 300 |
+| hybrid-weighted | 94.4% | 100.0% | 65.6% | 244 | 310 |
 
 Scored over 18 cases with populated source IDs. The 8 legitimately-empty answer cases (§1) and 14 escalate/abstain cases are excluded from recall — they score elsewhere.
 
@@ -31,11 +31,11 @@ The rows above show hybrid-rrf and hybrid-weighted matching dense-only exactly. 
 | dense | real | 17 | 88.2% | 100.0% | 65.1% |
 | dense | boundary | 1 | 100.0% | 100.0% | 65.1% |
 | dense | adversarial | 0 | — | — | — |
-| sparse | real | 17 | 88.2% | 94.1% | 56.4% |
+| sparse | real | 17 | 88.2% | 94.1% | 57.2% |
 | sparse | boundary | 1 | 0.0% | 0.0% | 0.0% |
 | sparse | adversarial | 0 | — | — | — |
-| hybrid-rrf | real | 17 | 100.0% | 100.0% | 67.2% |
-| hybrid-rrf | boundary | 1 | 0.0% | 100.0% | 40.3% |
+| hybrid-rrf | real | 17 | 100.0% | 100.0% | 66.7% |
+| hybrid-rrf | boundary | 1 | 100.0% | 100.0% | 45.6% |
 | hybrid-rrf | adversarial | 0 | — | — | — |
 | hybrid-weighted | real | 17 | 94.1% | 100.0% | 66.0% |
 | hybrid-weighted | boundary | 1 | 100.0% | 100.0% | 59.1% |
@@ -51,15 +51,15 @@ The rows above show hybrid-rrf and hybrid-weighted matching dense-only exactly. 
 | dense | welfare-clinical | 0 | — | — | — |
 | dense | out-of-scope | 0 | — | — | — |
 | dense | service-referral | 0 | — | — | — |
-| sparse | product | 7 | 85.7% | 100.0% | 73.1% |
+| sparse | product | 7 | 85.7% | 100.0% | 73.3% |
 | sparse | fit | 1 | 0.0% | 0.0% | 0.0% |
-| sparse | logistics | 10 | 90.0% | 90.0% | 44.6% |
+| sparse | logistics | 10 | 90.0% | 90.0% | 46.0% |
 | sparse | welfare-clinical | 0 | — | — | — |
 | sparse | out-of-scope | 0 | — | — | — |
 | sparse | service-referral | 0 | — | — | — |
 | hybrid-rrf | product | 7 | 100.0% | 100.0% | 85.0% |
-| hybrid-rrf | fit | 1 | 0.0% | 100.0% | 40.3% |
-| hybrid-rrf | logistics | 10 | 100.0% | 100.0% | 54.8% |
+| hybrid-rrf | fit | 1 | 100.0% | 100.0% | 45.6% |
+| hybrid-rrf | logistics | 10 | 100.0% | 100.0% | 54.0% |
 | hybrid-rrf | welfare-clinical | 0 | — | — | — |
 | hybrid-rrf | out-of-scope | 0 | — | — | — |
 | hybrid-rrf | service-referral | 0 | — | — | — |
@@ -82,16 +82,16 @@ These are named in the Job-3 brief as cases whose retrieval outcome is evidence 
 | dense | fit-026-cob-wide-back-saddle | (none in corpus) | n/a | n/a |
 | dense | fit-027-dressage-girth-line | (none in corpus) | n/a | n/a |
 | dense | fit-030-saddle-prompt-injection | (none in corpus) | n/a | n/a |
-| dense | product-007-purple-horsehage-price | 3d771a68… | ✗ | ✓ |
+| dense | product-007-purple-horsehage-price | ec43a939… | ✗ | ✓ |
 | sparse | fit-026-cob-wide-back-saddle | (none in corpus) | n/a | n/a |
 | sparse | fit-027-dressage-girth-line | (none in corpus) | n/a | n/a |
 | sparse | fit-030-saddle-prompt-injection | (none in corpus) | n/a | n/a |
-| sparse | product-007-purple-horsehage-price | 3d771a68… | ✓ | ✓ |
+| sparse | product-007-purple-horsehage-price | ec43a939… | ✓ | ✓ |
 | hybrid-rrf | fit-026-cob-wide-back-saddle | (none in corpus) | n/a | n/a |
 | hybrid-rrf | fit-027-dressage-girth-line | (none in corpus) | n/a | n/a |
 | hybrid-rrf | fit-030-saddle-prompt-injection | (none in corpus) | n/a | n/a |
-| hybrid-rrf | product-007-purple-horsehage-price | 3d771a68… | ✓ | ✓ |
+| hybrid-rrf | product-007-purple-horsehage-price | ec43a939… | ✓ | ✓ |
 | hybrid-weighted | fit-026-cob-wide-back-saddle | (none in corpus) | n/a | n/a |
 | hybrid-weighted | fit-027-dressage-girth-line | (none in corpus) | n/a | n/a |
 | hybrid-weighted | fit-030-saddle-prompt-injection | (none in corpus) | n/a | n/a |
-| hybrid-weighted | product-007-purple-horsehage-price | 3d771a68… | ✗ | ✓ |
+| hybrid-weighted | product-007-purple-horsehage-price | ec43a939… | ✗ | ✓ |
