@@ -15,6 +15,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { computeChunkId } from './compute-chunk-id.js';
 import type { ChunkInput, DocumentInput, DocumentWithChunks } from './types.js';
 
 export interface PersistResult {
@@ -107,7 +108,14 @@ async function replaceChunks(
     return [];
   }
 
+  // ADR-0013: pass explicit deterministic `id` on each insert rather
+  // than relying on the `gen_random_uuid()` default. Same inputs
+  // (document_id, ordinal, text) → same UUID, across any re-ingest.
+  // This is what makes chunk IDs durable references — golden set
+  // rows, trace logs, staff-console review artefacts all keep
+  // pointing at the same chunk after re-ingesting unchanged content.
   const rows = chunks.map((chunk) => ({
+    id: computeChunkId(documentId, chunk.ordinal, chunk.text),
     document_id: documentId,
     ordinal: chunk.ordinal,
     parent_chunk_id: null,
@@ -122,12 +130,19 @@ async function replaceChunks(
     embedding: (chunk.embedding ?? null) as unknown as string | null,
   }));
 
+  // `upsert(onConflict: 'id')` gives us idempotence: if the previous
+  // DELETE above didn't actually clear the row (partial delete, or
+  // for whatever reason the same id already exists), the upsert
+  // updates in place instead of throwing on duplicate PK. In the
+  // normal path the DELETE cleared the space and this behaves like
+  // an insert. Belt-and-braces for the half-done recovery case
+  // named in ADR-0013.
   const { data: inserted, error: insertError } = await supabase
     .from('chunks')
-    .insert(rows)
+    .upsert(rows, { onConflict: 'id' })
     .select('id, ordinal');
   if (insertError || !inserted) {
-    throw new Error(`chunk insert failed: ${insertError?.message ?? 'no rows returned'}`);
+    throw new Error(`chunk upsert failed: ${insertError?.message ?? 'no rows returned'}`);
   }
 
   const sorted = [...inserted].sort((a, b) => Number(a['ordinal']) - Number(b['ordinal']));
