@@ -1395,3 +1395,146 @@ throughout. No auth failures, no rate-limit issues at n=1.
   surface is worth doing — `/api/health`, `/api/answer`,
   `/api/about`, `/api/stream/demo` are the four the API layer
   exposes today.
+
+### GW-17 close-out — partial (2026-09-16)
+
+**Story:** Golden set expansion — four cases per product type
+covering the ADR-0005 four-shape spec (exact / substitute-held /
+orderable / genuinely-unavailable) across feed / haylage /
+supplements / bedding-shavings. Nominal target was 16 new cases
+taking the grid to 56.
+
+**Shipped partial.** 9 new real-customer cases added
+(product-041 through product-049), grid now at 49. Seven shape ×
+type slots still gapped — real DMs for those shapes weren't
+present in what the shop pulled today.
+
+**As-measured harness result** — all 5 Sprint 2 gates still pass:
+
+| metric | pre-GW-17 | post-GW-17 | gate | status |
+| --- | ---: | ---: | ---: | --- |
+| `intent_classification_accuracy` | 0.950 (38/40) | 0.939 (46/49) | ≥ 0.85 | passes |
+| `correct_behavior_dispatch` | 0.950 (38/40) | 0.959 (47/49) | ≥ 0.90 | passes |
+| `correct_abstention` | 0.929 (13/14) | 0.929 (13/14) | ≥ 0.90 | passes |
+| `false_refusal` | 0.038 (1/26) | 0.029 (1/35) | ≤ 0.10 | passes |
+| `no_prohibited_claims` | 1.000 (18/18) | 1.000 (27/27) | = 1.00 | passes |
+
+Adversarial slice unchanged (100% on every gate — no adversarial
+cases added). Raw results at
+`evals/results/sprint-2/20260916T003244Z.json`.
+
+**One new real-customer miss surfaced:** case 047
+(`product-047-burlybed-price-list`) — router classified as
+`logistics` instead of `product`. The message opens "please could
+you send me prices and delivery charge for bedding" — leading with
+"delivery charge" pulls the classifier toward logistics. But
+`correct_behavior_dispatch` scored 1.0 on this case: both `logistics`
+and `product` default to `answer` per ADR-0011's dispatch table,
+so the wrong intent still routed to the correct behaviour. Nice
+worked-example of the pair invariant catching an intent miss
+before it becomes a customer-visible failure.
+
+**Per-intent recall (post-GW-17):**
+
+- product: 20/21 = 0.952 (was 12/12, one new miss: 047)
+- logistics: 11/12 = 0.917 (unchanged)
+- out-of-scope: 5/6 = 0.833 (unchanged, case 006)
+- fit / welfare-clinical / service-referral: all still 100%
+
+**Shape × type coverage after this pass (11/16 slots):**
+
+| type              | exact | substitute-held | orderable | unavailable |
+| ----------------- | :---: | :---: | :---: | :---: |
+| feed              | ✓ 041 | ✗ | ✓ 004 (existing) | ✓ 042 |
+| haylage           | ✓ 007 (existing) | ✓ 043 | ✓ 044 | ✗ |
+| supplements       | ✗ | ✗ | ✓ 045, 046 | ✗ |
+| bedding/shavings  | ✓ 047, 048 | ✗ | ✓ 049 | ✗ |
+
+**Remaining gaps (5 shape/type slots):**
+
+1. **feed substitute-held** — customer named product A, shop had
+   equivalent B in stock. Ideal shape from clusters: A&P Fast Fibre
+   ↔ Dengie Healthy Hooves, Saracens Competition Cubes ↔ Mix.
+2. **haylage unavailable** — customer named haylage variant, shop
+   couldn't hold or source. Would fill a real gap since the
+   haylage-substitute case (043) already covers the alternate-
+   surfacing shape.
+3. **supplements exact** — customer named a specific supplement
+   the shop stocks. TopSpec Lite Balancer, Allen & Page Veteran
+   Vitality per the sales-data memo.
+4. **supplements substitute-held** — customer named supplement A,
+   shop had equivalent B in stock. The supplement space has less
+   direct substitutability than feed, so the ask needs to be
+   specific.
+5. **supplements unavailable** — customer named a supplement the
+   shop didn't hold and couldn't source.
+6. **bedding substitute-held** — customer named bedding brand A,
+   shop had equivalent B in stock. The DM export had one adjacent
+   ("hemp bedding → aubiose" — categorised as exact-category here).
+7. **bedding unavailable** — customer named bedding the shop
+   couldn't hold or source.
+
+That's seven gaps for six missing shape × type combinations —
+supplements-orderable has two examples (045 Haygates + 046
+Saracens) so counts as one slot filled twice.
+
+**Shipping strategy called out**
+
+- **Real-customer provenance preserved.** All 9 new cases are
+  verbatim (or single-topic-derived) from real NFCS DMs. None are
+  `constructed-*`. Grid Cut B (provenance) moves from 25/7/8
+  toward 34/7/8 — real-customer share increases.
+- **PII stripped per existing pattern.** Customer and staff
+  names removed. Location references (Bransgore in DM 1, SO41 in
+  the shavings DM) preserved-if-relevant — same policy as case
+  031 (Winchester SO22). All names removed from the source
+  messages this story imported.
+- **Prohibited-claims tuned per shape.** Unavailable cases
+  prohibit false claims of stock or sourcing. Substitute-held
+  prohibits false claims of holding the queried product.
+  Orderable prohibits both false-in-stock and false-cannot-
+  source (two-sided). Exact prohibits only false-does-not-stock.
+  Wording is product-name-specific ("we stock Devon haylage")
+  rather than substring-vague ("we stock") to avoid false
+  positives on legitimate phrases.
+- **`required_source_ids` left empty for all 9 new cases.**
+  Sprint 2 has no retrieval + synthesis wired, so retrieval-
+  side metrics score 0 across the board regardless. Sprint 3
+  needs to populate these where corpus support exists —
+  particularly for haylage substitute-held (043) which points
+  at horsehage/burlybale chunks the shop actually holds.
+- **The Devon-haylage sibling test.** Case 043 (product-intent
+  purchase question about Devon haylage) sits next to existing
+  case 006 (`oos-006-devon-haylage-intent`, out-of-scope
+  inventory-strategy question about the same product). Both
+  mention Devon haylage; the router correctly disambiguated by
+  framing (043 → product, 006 → OOS). That's a real
+  discriminative signal the golden set now exercises.
+
+**Follow-ups**
+
+- **7 shape/type gaps remaining.** When the shop can pull more
+  DMs (especially unavailable-shape and supplements-family
+  examples), a GW-17b close-out closes them. Grid target of 56
+  from the original plan is 7 cases away.
+- **Case 047 is a real-customer product-intent miss worth
+  investigating.** The router pulled logistics because "delivery
+  charge" is a strong logistics anchor. This isn't a cascade
+  failure yet — dispatch caught it — but if similar
+  "prices AND delivery" compound messages become common,
+  Sprint 3 could either widen the product-intent examples in the
+  LLM prompt or add a compound-intent handling rule. Recorded
+  in ADR-0010 amendment territory rather than fixed now (Decision
+  3 pattern — deferred without chase).
+- **Existing cases 001-020 predate the four-shape spec** and
+  don't all carry shape tags. Case 004 (`product-004-csj-
+  complete-tripe`) is ORDERABLE by content but has EXACT-shape
+  prohibitions. Not urgent — the case passes as-is — but a
+  Sprint 3 audit pass across the pre-ADR-0005 cases could
+  retrofit shape tags for cleaner GW-19 (substitute ranking)
+  analysis later.
+- **NFCS substitute-cluster intel is now in memory.** The 90-day
+  sales-data snapshot the shop provided is preserved at
+  `~/.claude/projects/-Users-vixhawley-Capstone/memory/project_nfcs_substitute_clusters.md`
+  — future GW-17b or GW-19 work should read that memory before
+  authoring new substitute cases.

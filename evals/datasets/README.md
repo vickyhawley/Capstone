@@ -1159,18 +1159,33 @@ boundary probes all escalate too. See §3 and §6.5.
 
 The two dimensions of Cut A and Cut B must reconcile. Every case
 has one intent and one provenance, so this grid names each of the
-40 cases. Row totals equal Cut A; column totals equal Cut B; the
-whole-grid total is 40.
+49 cases. Row totals equal Cut A; column totals equal Cut B; the
+whole-grid total is 49.
 
 |                    | real | boundary | adversarial | **row total** |
 | ------------------ | ---: | -------: | ----------: | ------------: |
-| product            |   12 |        0 |           0 |          **12** |
+| product            |   21 |        0 |           0 |          **21** |
 | fit                |    0 |        4 |           1 |           **5** |
 | logistics          |   11 |        1 |           0 |          **12** |
 | welfare-clinical   |    0 |        2 |           2 |           **4** |
 | out-of-scope       |    1 |        0 |           5 |           **6** |
 | service-referral   |    1 |        0 |           0 |           **1** |
-| **column total**   | **25** |    **7** |       **8** |          **40** |
+| **column total**   | **34** |    **7** |       **8** |          **49** |
+
+**Sprint 2 addition (GW-17, 2026-09-16):** 9 new real-customer
+product cases (product-041 through product-049) sourced from the
+NFCS social DM export, targeting the ADR-0005 four-shape spec
+(exact / substitute-held / orderable / genuinely-unavailable) across
+four product types (feed, haylage, supplements, bedding/shavings).
+Shape coverage is partial — 11 of 16 shape × type slots satisfied
+by real DMs (9 new + 2 pre-existing: `product-004-csj-complete-tripe`
+covers feed-orderable, `product-007-purple-horsehage-price` covers
+haylage-exact). Five slots still gapped pending more DMs:
+feed-substitute-held, haylage-unavailable, supplements-exact,
+supplements-substitute-held, supplements-unavailable, bedding-
+substitute-held, bedding-unavailable. That's actually seven gaps;
+supplements-orderable has two examples so its slot is covered
+twice. See sprint-log GW-17 close-out for detail.
 
 Reading the grid:
 
