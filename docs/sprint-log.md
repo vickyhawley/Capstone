@@ -2295,3 +2295,102 @@ poking at a partially-mutated database.
 
 Then move on to Story 3 (GW-25 trace logging) — the tool loop
 foundation (Story 2) already shipped in Sprint 3 as `252794f`.
+
+## Sprint 3 — in progress (running log)
+
+### Story 1 close-out (2026-09-16)
+
+**Story:** deterministic chunk IDs per ADR-0013. Six runbook
+steps + user-requested idempotence proof, all landed.
+
+**As-measured result:**
+
+- 417 chunks re-populated with `sha256(document_id, ordinal,
+  content)` UUIDs.
+- 18 golden cases reconciled against the new IDs. Zero
+  reconciler warnings.
+- Idempotence proof (user's explicit ask): ran ingest a second
+  time with `--force`; snapshotted all 417 chunk IDs pre and
+  post keyed by `(document_id, ordinal)`; result: **417/417
+  chunk IDs byte-identical**. Zero drift. This is the property
+  ADR-0013 exists for.
+- Reconciler "should stop firing" check passed: dry-run on the
+  migrated dataset reports `0 case(s) changed`. Every case
+  `UNCHANGED`.
+- Post-migration retrieval baseline: dense / sparse / hybrid-
+  weighted byte-identical to Sprint 2. Hybrid-rrf moved
+  +5.6pt on recall@5 for a diagnosed non-migration reason —
+  see the fragility flag below.
+
+**Commits (all pushed):** `25867c4` (computeChunkId), `576d76a`
+(class-closing fix: report split + runbook fix + ADR
+consequence + AAD entry), `6130621` (Story 1 sign-off).
+
+**Follow-ups**
+
+- **Hybrid-rrf's post-migration 100% recall@5 is FRAGILE — case
+  007 is the canonical target to watch.** Diagnosis: sparse's
+  `ts_rank` produces tied scores for chunks matching an OR-
+  query with the same word overlap. When scores tie, Postgres
+  orders by row visibility (insertion order + MVCC internals).
+  The re-ingest inserted chunks in a different order than
+  Sprint 2's ingest did, so ts_rank ties resolved differently.
+  Case 007 (`product-007-purple-horsehage-price`, trade-
+  synonym) landed at sparse rank ≤5 this ingest where before
+  it was rank 6+. RRF fusion is rank-sensitive, so this
+  promoted case 007 into hybrid-rrf's top-5 — moving the
+  aggregate from 17/18 = 94.4% to 18/18 = 100%.
+
+  **This could revert on the next re-ingest.** The tie-break
+  ordering is a property of when rows are inserted, not of
+  the data. Insertion order will differ again on any future
+  re-ingest.
+
+  Sprint 2's ADR-0001 addendum row (hybrid-rrf 94.4%) stands
+  — that was the honest number at that ingest. The post-
+  migration 100% is a new observation, not a correction; it
+  is not added to the four-sprint table because Sprint 3
+  Story 1 did not introduce a retrieval intervention.
+
+  **The durable fix is ADR-0009 (synonym dictionary),
+  already a Sprint 3 candidate.** When Sprint 3 (or Sprint 4)
+  runs the next retrieval baseline — whether via reranker
+  spike, synonym dictionary, or any other retrieval-side work
+  — the specific check is: **does case 007 hit sparse top-5
+  on that ingest?** If it does, we're on the same tie-break
+  side as this ingest. If it doesn't, we've reverted, and
+  hybrid-rrf recall@5 drops back to 94.4% — that's not a
+  retrieval regression, it's the underlying instability
+  surfacing.
+
+- **Ingest report class-closing fix (commit `576d76a`).** The
+  ingest report now emits `embedded (computed): N` alongside
+  `persisted (in DB): M` and prints a CRITICAL warning + exits
+  1 when `embedded > persisted`. This closed the counter-shape
+  failure family GW-01 originally flagged (see
+  `docs/ai-assisted-development.md` Sprint 3 entry, 2026-09-16).
+  The class-closing side-effect matters more than the
+  migration-specific fix: any future ingest with a mismatch
+  between work-computed and work-landed now fails loudly.
+
+- **Runbook Step 3 fixed in-place (commit `576d76a`).** Uses
+  `pnpm ingest -- --force`; adds report-line verification and
+  a Python-in-shell determinism spot-check that recomputes
+  the expected chunk ID from `(document_id, ordinal, text)`
+  and asserts `MATCH` against the DB. Next session runs Step 3
+  verbatim without hitting the short-circuit bug this session
+  hit.
+
+- **ADR-0013 gained a general "identity-contract change
+  requires --force" consequence (commit `576d76a`).** Not
+  specific to this ADR; applies to any future hash-algorithm
+  change or any scheme that shifts chunk identity without
+  changing document text. Recorded so the next such change
+  doesn't rediscover it.
+
+- **GW-18 smoke-tested against the new corpus (2026-09-16):**
+  four cases (product, welfare, fit+adversarial, out-of-scope)
+  round-tripped correctly. Same shape as pre-migration.
+  `tool_calls: []` in every case because NoopPlanner +
+  StubToolRegistry are still in place; when real tools land in
+  Story 4/5/6, this smoke test is worth re-running.
