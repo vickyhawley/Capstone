@@ -1737,3 +1737,210 @@ the offending case_id + chunk_id and the fix pointer, exit 2.
   itself — it'd have to either (a) call Supabase in a preflight
   wrapper or (b) trust the retrieval-experiment CLI to have
   run first. Deferred with a note here so the gap is visible.
+
+## Sprint 3 — planning (2026-09-16)
+
+### Goal
+
+Land the tool layer. The system stops being a retrieval pipeline
+and starts being an assistant that *does things* — checks stock,
+computes fit, verifies a delivery postcode. Sprint 2 built the
+walls that defined what the system will and won't say. Sprint 3
+builds the arms that let it reach outside itself for facts it
+must not invent.
+
+The final demo needs this most: a delivery-zone check that
+resolves against real data, a circuit breaker firing on a
+degraded downstream, a trace log showing which tool was called
+with what arguments — these are legible on camera in a way a
+recall number is not.
+
+### The sequencing decision, made explicitly
+
+The user brief is GW-18 through GW-26: tool port and function-
+calling loop, stock lookup, fit/sizing, delivery-zone check,
+tool-use disclosure in the UI, model tiering with cost capture,
+circuit breaker and degradation ladder, trace logging, staff
+console. Nine stories, the spine of the sprint.
+
+But three commitments come first:
+
+1. **Deterministic chunk IDs.** Third instance of the "plausible
+   output, no underlying signal" failure family landed in Sprint 2
+   (see sparse-fix-rematch close-out, and
+   `docs/ai-assisted-development.md` Sprint 2 entry). The
+   reconciler and the preflight are both workarounds for a
+   schema decision (`gen_random_uuid()`). The structural fix is
+   `sha256(document_id, ordinal, content_hash)` cast to UUID.
+   Every ingest of unchanged content produces identical IDs;
+   golden set references become durable. Must land before GW-25
+   (trace logging) starts storing chunk IDs anywhere new — a
+   trace log full of transient UUIDs is the same class of
+   invalidation waiting to happen. See ADR-0013.
+
+2. **GW-18 (tool port + function-calling loop) is the foundation.**
+   Every other tool story (GW-20/21/22) is a specific tool
+   plugged into GW-18's loop. GW-25 (trace logging) attaches
+   to GW-18's dispatch hooks. GW-26 (circuit breaker) wraps
+   GW-18's execution. Nothing else in the tool sprint moves
+   without GW-18 first. See the GW-18 design doc (ADR-0014).
+
+3. **GW-25 (trace logging) lands alongside GW-18, not at the end.**
+   The user brief called this out — retrofitting tracing after
+   the tool loop is built is more work than shipping tracing
+   with the loop. Trace hooks are already assumed by the
+   `TraceSink` port from Sprint 0. GW-18 wires them; GW-25
+   makes them persistent.
+
+So: **deterministic chunk IDs first, then GW-18 + GW-25 as a
+pair, then the individual tools, then the operator surface
+(disclosure, circuit breaker, staff console).**
+
+### Stories in order
+
+| # | Story | Kind | Notes |
+| ---: | --- | --- | --- |
+| 1 | Deterministic chunk IDs | Sprint 2 promotion | ADR-0013. Compute chunk `id` at ingest time as a hash-cast UUID. `INSERT ... ON CONFLICT (id) DO UPDATE`. One-time transition run to swap existing IDs. Reconciler becomes a no-op verifier. |
+| 2 | **GW-18 tool port + function-calling loop** | Sprint 3 spine | ADR-0014. `ToolRegistry` port already exists (stub since Sprint 0). Bounded iterations per ADR-0002. Structured errors returned to the model. Trace hooks wired. |
+| 3 | **GW-25 trace logging** | Sprint 3 spine | Persist every tool invocation (args, result, duration, trace ID). Depends on GW-18's dispatch shape. Ships alongside so tracing is native, not retrofit. |
+| 4 | **GW-20 stock lookup tool** | Sprint 3 spine | The load-bearing product-intent tool. Deterministic (against catalogue). Returns three-state stock plus substitute suggestion (subsumes ADR-0005 substitute-ranking work into the tool's return shape rather than as a separate story). |
+| 5 | **GW-22 delivery-zone check tool** | Sprint 3 spine | The load-bearing logistics-intent tool. Postcode → in / edge / out per the ADR-0007-style filter reasoning + delivery.md guide. Case 031 (Winchester SO22) is the canonical target. |
+| 6 | GW-21 fit/sizing tool | Sprint 3 spine | Guide-driven for jodhpurs / girth; attribute-schema-driven for supplements. Boots/hats still escalate to staff-service per ADR-0011. |
+| 7 | GW-24 model tiering + cost capture | Sprint 3 spine | Fast model for router (already using gpt-4o-mini per ADR-0001); Sonnet-tier for synthesis; cost captured in trace so per-turn cost is measurable, not estimated. |
+| 8 | GW-23 tool-use disclosure in UI | Sprint 3 spine | When a tool call fires, the UI surface shows "checked stock" / "verified delivery zone" as visible action. Complements GW-15's Article 50 disclosure — user sees what happened, not just that an AI happened. Depends on a UI being wired (still scaffold-only). |
+| 9 | GW-26 circuit breaker + degradation ladder + staff console | Sprint 3 spine | Wraps GW-18 execution. Circuit breaker on tool failures, structured fallback ladder (tool timeout → cached result → escalate to staff), staff console surfaces open circuits + degraded turns. |
+| 10 | Reranker spike | Sprint 1+2 carry-over | Deferred twice, ADR-0001 default-slots here. Dense-only vs +Cohere Rerank v3 vs +bge-reranker-base. Fits if there's room. |
+| 11 | ADR-0009 synonym dictionary (case 007) | Sprint 1+2 carry-over | Small targeted fix. Case 007 (purple/Timothy) is the canonical target. Would close a known 0.5pt recall@10 hole. |
+| 12 | Python harness preflight | Sprint 2 close-out follow-up | Same idea as retrieval-experiment preflight but for the Python side. Wraps Supabase calls or trusts the TS-side check has run first. |
+| 13 | GW-17 tag audit + GW-17b remaining shape gaps | Sprint 2 follow-up | Retrofit shape tags on cases 001–020 (pre-ADR-0005) + fill the 7 remaining shape/type slots once the shop pulls more DMs. |
+
+**GW-16 conversation memory — deferred to Sprint 4.** Same
+rationale as Sprint 2's deferral: it needs a multi-turn golden
+dataset which is its own authoring work, and cramming both the
+dataset shape change AND the memory implementation into a
+sprint that's already dense with the tool layer is asking for
+scope failure. Also — GW-16 partners with GW-18's tool
+composability question ("does the model need memory across tool
+calls within a turn?"), which is easier to answer after GW-18
+has shipped. Sprint 4 candidate.
+
+### The non-negotiable core
+
+Must ship or Sprint 3 has failed its thesis:
+
+- Deterministic chunk IDs (Story 1)
+- GW-18 tool port + function-calling loop (Story 2)
+- GW-25 trace logging (Story 3)
+- GW-20 stock lookup tool (Story 4)
+- GW-22 delivery-zone check tool (Story 5)
+
+Without these five, the "assistant that does things" claim is
+unsubstantiated. Everything else in the ordered list is defence-
+in-depth (GW-21 covers the fit corner but isn't load-bearing;
+GW-24 makes cost visible but doesn't gate anything; GW-23/26
+polish the surface).
+
+### What defers to Sprint 4 if the sprint runs short
+
+Same discipline as Sprint 2 — cuts happen from the top of this
+list first, i.e. tag audit goes first, GW-25 goes last:
+
+1. **GW-17 tag audit + GW-17b shape gaps** — Sprint 2 has already
+   half-shipped GW-17; the audit is quality-of-life for GW-19
+   analysis later, not blocking.
+2. **Python harness preflight** — the TS preflight covers the
+   acute hair-on-fire risk; the Python-side gap is documented
+   with a stderr-visible message rather than a silent 0.
+3. **ADR-0009 synonym dictionary** — case 007 is a single case,
+   0.5pt of recall@10. Boring win, not a Sprint 3 headline.
+4. **Reranker spike** — deferred twice already. Deferring a
+   third time is defensible if the tool spine takes the whole
+   sprint. The stopping-rule already applied.
+5. **GW-23 tool-use disclosure UI** — depends on a chat UI
+   existing beyond the scaffold. If Sprint 3 doesn't wire the
+   UI (unlikely for the tool spine to force this), disclosure
+   ships as a `disclosure_url` field pointer only and the
+   UI-embedded version slides to Sprint 4.
+6. **GW-26 circuit breaker + staff console** — the ladder can
+   ship without the staff console (which is UI). Circuit
+   breaker itself is core-shaped and must ship.
+7. **GW-21 fit/sizing tool — cut last of the tool stories.**
+   Fit questions score n/a on retrieval today; a fit tool is
+   headline-shaped but the golden set is thin here (5 fit
+   cases, 3 at `[]`). Defer only after everything above has
+   already been cut.
+
+### What Sprint 3 does NOT do
+
+- **Saddle and girth guides.** They close the ADR-0003 fit gap
+  and would move three fit cases off `[]`, but they're content
+  authoring — different work-shape from the tool layer, and
+  benefits from a session where SME collaboration is the focus.
+  Sprint 4 candidate. Judgement recorded 2026-09-16 in the
+  Sprint 3 planning session: the fit gap is bounded (3 cases,
+  no cascading effect on measurement), and Sprint 3 is dense
+  enough without content authoring competing for review time.
+  If Sprint 3 finishes early, promotion is one line.
+- **"What we don't stock" guide.** Same argument: content
+  authoring, needs SME. Sprint 4.
+- **GW-16 conversation memory.** Multi-turn dataset dependency;
+  Sprint 4.
+- **Case 006 OOS-boundary hardening.** Recorded as low-priority
+  in the Sprint 2 GW-11 close-out. Deferred with the note that
+  GW-18's tool layer + Sprint 3 synthesis-side work may address
+  it downstream (retrieval returns `[]` for a product NFCS
+  doesn't stock, stock tool returns "no", synthesis emits an
+  abstain-shaped response). If it isn't caught downstream by
+  end of Sprint 3, it becomes a Sprint 4 hardening item.
+
+### Sprint 4 candidates (recorded here so nothing falls off the board)
+
+- **Saddle-fitting + girth-fitting guides.** Content authoring.
+  Closes the ADR-0003 fit gap; moves fit cases 026/027/030 off
+  `[]`. SME-collaboration session.
+- **"What we don't stock" guide.** Addresses the "corpus has no
+  positive representation of absence" finding from Sprint 1.
+  Content authoring.
+- **GW-16 conversation memory + multi-turn golden dataset.**
+  Depends on `evals/datasets/sprint-4/` (or similar) with a
+  multi-turn dataset shape per README §6.6. Includes case 015
+  (`logistics-015-notice-required`) as the canonical
+  clarification-path target (per Sprint 2 GW-10 close-out).
+- **Calibrated router confidence.** Top-token log-probability,
+  self-consistency across N samples, or a small calibration
+  head. Sprint 2 baseline showed the LLM's self-reported field
+  is uniformly ~0.90; genuine calibration is a real piece of
+  work. If a Sprint 3 tool-layer design demands router
+  confidence, promote earlier.
+- **Case 006 OOS-boundary hardening** if not caught downstream
+  by GW-18/20 in Sprint 3.
+- **Anything from the Sprint 3 deferral order above that got
+  cut mid-Sprint 3.**
+
+### Follow-ups already carried into this planning
+
+- **ADR-0007 (retrieval query filters)** — depends on GW-10's
+  intent labels; unblocked now. Slotted into GW-20's stock
+  lookup (intent-filtered retrieval) rather than a separate
+  story.
+- **ADR-0008 (fusion strategy addendum)** — Sprint 2's sparse-
+  fix rematch resolved this (RRF wins on parameter count under
+  the tie-breaker rule); no Sprint 3 action.
+- **ADR-0006 (chunking strategy)** — still open; no forcing
+  story in Sprint 3, so it slips again to whenever the
+  chunker's defaults become the bottleneck.
+
+### Story-number reconciliation flag
+
+The user brief specified "GW-18 through GW-26" as the tool
+sprint spine — 9 stories. ADR-0005 references "GW-19
+(substitute ranking, Sprint 3)" as a separately-numbered story.
+This plan absorbs GW-19's substitute-ranking work into GW-20's
+stock lookup tool return shape (a stock query for an
+unavailable product returns "not held" plus substitute
+suggestion per ADR-0005's ranking rules) rather than treating
+substitute-ranking as its own story. That keeps the spine at
+9 stories matching the user's numbering. If the project board
+prefers GW-19 stays as a distinct story, the spine renumbers
+to GW-18, GW-20–GW-26 = 8 stories with GW-19 substitute as a
+Sprint 3 non-spine story. Flagging for the user.
