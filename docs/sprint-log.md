@@ -1957,3 +1957,303 @@ The spine renumbers to GW-18, GW-20–GW-26 = 8 tool-shaped
 stories with GW-19 substitute-ranking as its own Sprint 3
 story alongside. Reflected in the ordered stories table and
 non-negotiable core above.
+
+### Story 1 runbook — deterministic chunk IDs migration
+
+Destructive, several steps, all have to land, and not recoverable
+by re-reading a diff if it goes half-done. Fresh session. Nothing
+else in flight against the corpus or the eval harness while this
+runs.
+
+Read ADR-0013 before starting if it's been more than a day since
+the plan-review pass — this runbook is the "what to type"
+checklist; the ADR is the "why" the migration exists.
+
+**Preflight before starting:**
+
+- Working tree clean. `git status --short` reports nothing.
+- On `main`, up to date with `origin/main`.
+- `.env.local` has `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+  `OPENAI_API_KEY` populated (needed for ingest + reconcile +
+  retrieve).
+- No other terminal has an ingest / retrieve / harness run in
+  flight. Kill any lingering `pnpm ingest`, `pnpm retrieve`,
+  `pnpm --filter @groundwork/api dev` before continuing.
+- **Baseline snapshot for step 6.** Note the current headline
+  Sprint 2 numbers from ADR-0001's four-sprint table so step 6
+  has something to compare against:
+
+  ```
+  Sprint 2 dense           88.9%  100.0%  65.1%  (recall@5 / recall@10 / nDCG@10)
+  Sprint 2 sparse          83.3%   88.9%  53.2%
+  Sprint 2 hybrid-rrf      94.4%  100.0%  65.7%
+  Sprint 2 hybrid-weighted 94.4%  100.0%  65.6%
+  ```
+
+  Step 6 confirms recall/nDCG land at these numbers ± small
+  noise. Larger drift means something changed that shouldn't
+  have.
+
+---
+
+**Step 1 — ship `computeChunkId` in ingest code.**
+
+Add the deterministic-ID computation to
+`packages/ingestion/src/persistence.ts`. Change the insert path
+to pass `id: computeChunkId(document_id, ordinal, text)` and
+switch to `upsert({...}, { onConflict: 'id' })`.
+
+Verify:
+
+```bash
+pnpm --filter @groundwork/ingestion typecheck && \
+  pnpm --filter @groundwork/ingestion test
+```
+
+Both must pass. **Do not proceed to step 2 if either fails** —
+running ingest against buggy ID computation would corrupt the
+transition. Also verify commit landed in `main` (or the working
+branch) before proceeding — the state you're about to migrate
+to must be reproducible if a rollback is needed.
+
+Wrong looks like: typecheck errors on the new function; tests
+failing on the changed insert path; ingest CLI complains about
+missing `id` on insert.
+
+---
+
+**Step 2 — truncate `chunks` (destructive).**
+
+Operator step, one SQL statement via the Supabase SQL editor:
+
+```sql
+truncate chunks;
+```
+
+`documents` stays intact — chunks are rebuilt from documents in
+step 3. Cascade on `documents.id` is not triggered because we're
+truncating `chunks` directly, not deleting documents.
+
+Verify:
+
+```sql
+select count(*) from chunks;
+-- expect 0
+
+select count(*) from documents;
+-- expect the same number as before this session started
+-- (~120 at Sprint 2 close, but check ADR-0003 / GW-01 for the
+-- current number)
+```
+
+Wrong looks like: `documents` count changed (something else
+happened — investigate before proceeding); truncate reported
+an error (row-level policy blocking — should be impossible with
+service-role, but if it happens, `alter table chunks disable
+row level security` is not the answer, investigate instead).
+
+---
+
+**Step 3 — re-ingest with new deterministic IDs.**
+
+```bash
+pnpm ingest
+```
+
+Every chunk gets a deterministic ID via step 1's code.
+Embeddings are re-computed (Sprint 2's fold-in handles this).
+Expect ~30s runtime + ~$0.002 at 500-chunk scale.
+
+Verify:
+
+```sql
+select count(*) as chunks, count(embedding) as with_embedding
+from chunks;
+-- expect chunks = with_embedding, both non-zero
+```
+
+Also spot-check that IDs look deterministic — pick any product
+handle and query twice, IDs should be identical:
+
+```sql
+select c.id
+from chunks c
+join documents d on d.id = c.document_id
+where d.source_ref = 'aubiose-hemp-bedding'
+order by c.ordinal;
+```
+
+Wrong looks like:
+
+- Chunk count differs materially from before (chunker parameters
+  drifted — inspect the diff of `packages/ingestion/src/`
+  between now and Sprint 2 close).
+- `with_embedding < chunks` (embedding fold-in regressed —
+  investigate before continuing; without embeddings, dense
+  retrieval will score 0 in step 6 and give you a false
+  regression signal).
+- Ingest CLI errored partway through — see "if it goes half-
+  done" below.
+
+---
+
+**Step 4 — reconcile the golden set to the new IDs.**
+
+```bash
+set -a && source .env.local && set +a
+evals/.venv/bin/python evals/scripts/reconcile_source_ids.py --dry-run
+```
+
+Dry-run first. Verify **zero warnings** in the output — every
+declared retrieval target (product handle or guide slug+section)
+must resolve to a current chunk. Then apply:
+
+```bash
+evals/.venv/bin/python evals/scripts/reconcile_source_ids.py --apply
+```
+
+Verify: reconciler output ends with `summary: N case(s)
+changed` where N = 18 (the count of cases with populated
+`required_source_ids`).
+
+Wrong looks like:
+
+- **Warnings during dry-run:** the reconciler couldn't find a
+  handle or section. Most likely cause: a product handle in
+  `CASE_TARGETS` doesn't exist in the current catalogue
+  (product got renamed / removed), or a guide section title
+  changed. **Do not apply.** Fix the target spec first, then
+  re-dry-run.
+- **N ≠ 18:** either fewer cases have `required_source_ids` than
+  expected (something changed the golden set unexpectedly) or
+  more (someone added source IDs since Sprint 2 close). Compare
+  against `git log evals/datasets/sprint-1/cases.jsonl` to see
+  what changed.
+
+---
+
+**Step 5 — confirm preflight passes.**
+
+```bash
+pnpm --filter @groundwork/retrieval-experiment retrieve
+```
+
+The first line of output must be:
+
+```
+Preflight: all N unique required_source_ids exist in chunks.
+```
+
+Where N ≥ 21 (the 21 unique IDs at Sprint 2 close, up if the
+golden set grew).
+
+Wrong looks like: `PREFLIGHT FAILED: X of N required_source_ids
+do not exist in the current chunks table.` This means step 3's
+IDs and step 4's reconciled IDs don't match — the reconciler
+looked at a different corpus state than the one currently in
+the DB. **Do not proceed.** Two possibilities:
+
+1. Something re-truncated or re-ingested between step 3 and
+   step 4. Restart the sequence from step 2 (safe — see
+   "if it goes half-done" below).
+2. The reconciler's `CASE_TARGETS` matches something other
+   than what the ingest produces (handle vs. metadata mismatch,
+   ordinal mismatch). Inspect the specific missing IDs, run
+   `find_chunks.py --handle X` for the affected products,
+   compare against `reconcile_source_ids.py`'s `CASE_TARGETS`
+   spec. Fix the reconciler, re-run step 4 dry-run first.
+
+---
+
+**Step 6 — confirm the retrieval baseline still reports Sprint 2 numbers.**
+
+Same `pnpm retrieve` invocation as step 5 completes with the
+baseline write. Read the headline table in
+`evals/results/sprint-1/retrieval-baseline.md` and compare
+against the pre-migration snapshot from the preflight-before-
+starting section above.
+
+Expected: recall@5, recall@10, nDCG@10 land at Sprint 2's
+numbers ± 1pt of noise. Latency numbers can drift more (they're
+wall-clock).
+
+Wrong looks like:
+
+- **Any config drops materially (>3pt on recall@10):** something
+  affected retrieval that shouldn't have. Two most-likely
+  causes: (a) embedding regeneration didn't happen and dense
+  is degraded (check `select count(embedding) from chunks`
+  again), (b) chunker parameters changed between Sprint 2 and
+  now and the chunks are semantically different. **Investigate
+  before shipping the migration.** A quiet regression here is
+  worse than an obvious step-2/3 failure.
+- **All configs at 0.0%** (the sparse-fix-rematch pattern):
+  step 5's preflight should have caught this. If it didn't and
+  step 6 shows all zeros, the preflight logic itself may have
+  a bug. Log the counts to check.
+- **Numbers moved in the right direction (higher):** still
+  investigate. A recall improvement without any retrieval-side
+  work is a signal that the reconciler was more permissive
+  than intended (e.g. added chunks to a case's required_source_
+  ids that shouldn't have been targets). Compare
+  `git diff evals/datasets/sprint-1/cases.jsonl` before and
+  after step 4 apply.
+
+**Only after step 6 passes** does the migration count as landed.
+Only then continue with GW-18 story #2 (which is already
+implemented but hasn't been tested against the new corpus) and
+subsequent Sprint 3 stories.
+
+---
+
+**If it goes half-done:**
+
+Deterministic IDs are idempotent — that's the whole point of
+this migration. Recovery is simple:
+
+- **Half-done at step 1 (code partially shipped):** git revert
+  the partial commit; you're back to the pre-migration state.
+  No corpus changes yet.
+- **Half-done at step 2 (truncate ran but no re-ingest yet):**
+  just run step 3. `chunks` is empty, `documents` is intact,
+  `pnpm ingest` rebuilds cleanly.
+- **Half-done at step 3 (partial re-ingest):** truncate again,
+  re-ingest. The deterministic-ID contract means the re-ingest
+  produces identical IDs to a completed step 3 — so any golden
+  set already reconciled against a partial run will still
+  match. **This is the recovery-shape the migration was
+  designed for. It's safe to restart from step 2.**
+- **Half-done at step 4 (reconciler mid-run or errored):** the
+  reconciler is transactional at the file level — it either
+  writes the whole updated JSONL or leaves the old one intact.
+  Check `git diff evals/datasets/sprint-1/cases.jsonl`. If
+  partial content is on disk, `git checkout` the file, then
+  re-run step 4.
+- **Half-done at step 5/6 (preflight or baseline reported
+  something unexpected):** the corpus is in a consistent state
+  (steps 1-4 completed), but the migration hasn't been signed
+  off. Investigate the specific failure per the "wrong looks
+  like" sections above. Do not proceed to Sprint 3 story 2+
+  work until step 6 passes.
+
+**Do not try to "partially fix" a half-done migration.** The
+determinism guarantee means restarting from step 2 always
+produces the same end state. That's cheaper (and safer) than
+poking at a partially-mutated database.
+
+---
+
+**Final gate before signing off Story 1:**
+
+- Step 6 baseline matches Sprint 2 numbers.
+- Reconciler dry-run on the applied dataset reports
+  `summary: 0 case(s) changed`. This is the "should stop
+  firing" property ADR-0013 promises — every subsequent run
+  of the reconciler on the migrated dataset must be a no-op.
+- Commit: the ingest code change, the reconciled
+  `cases.jsonl`, and any migration SQL that landed. Include
+  the pre- and post-migration baseline numbers in the commit
+  message so the durability claim is auditable from git.
+
+Then move on to Story 3 (GW-25 trace logging) — the tool loop
+foundation (Story 2) already shipped in Sprint 3 as `252794f`.
