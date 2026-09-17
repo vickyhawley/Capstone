@@ -51,3 +51,13 @@ create index if not exists traces_attributes_gin on traces using gin (attributes
 -- retrieval targets — none of which are anon-safe. Anon/authenticated
 -- have no route to write or read.
 grant insert, select on traces to service_role;
+
+-- Enable RLS with no policies. service_role bypasses RLS by design
+-- (Supabase's built-in service_role behaviour), so writes and reads
+-- via the SupabaseTraceSink adapter — which authenticates with
+-- SUPABASE_SERVICE_ROLE_KEY — continue to work. anon and
+-- authenticated get default-deny on every operation. Defence-in-
+-- depth against a future GRANT that would otherwise silently expose
+-- the table. Sprint 3 2026-09-17: chunks + documents don't have
+-- this yet; captured as a follow-up.
+alter table traces enable row level security;

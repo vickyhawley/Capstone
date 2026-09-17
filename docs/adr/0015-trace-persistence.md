@@ -152,11 +152,25 @@ policy for traces table" as a story. Not "consider retention" —
 "decide retention." Options at that point are likely 30-day / 90-
 day rotation via `pg_partman` or a scheduled job.
 
-### 7. No RLS surprises — service-role write, no anon/authenticated grants
+### 7. RLS enabled with no policies — service-role bypasses, everyone else default-deny
 
-Traces contain no PII per port contract. Service role writes and
-reads. No grants to anon or authenticated. Matches the pattern for
-`chunks`.
+Traces contain no PII per port contract, but they do carry model
+rationales, tool arguments, and retrieval targets. `alter table
+traces enable row level security` with no policies means: service
+role (which the `SupabaseTraceSink` adapter uses via
+`SUPABASE_SERVICE_ROLE_KEY`) bypasses RLS by Supabase's built-in
+behaviour, and anon/authenticated get default-deny on every
+operation. Defence-in-depth against a future GRANT that would
+otherwise silently expose the table.
+
+**Correction — 2026-09-17.** The initial ADR text claimed "matches
+the pattern for `chunks`" — that was wrong. `chunks` and
+`documents` don't have RLS enabled either. The Supabase SQL editor
+caught the gap when the operator was about to apply migration 004.
+Fix: this ADR names RLS-enabled as the correct pattern; the
+migration was updated in-flight to include the ALTER TABLE
+statement. Enabling RLS on `chunks` and `documents` is now a
+follow-up (Sprint 4 hardening candidate).
 
 ### 8. Cost + token attributes reserved for GW-24
 

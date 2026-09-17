@@ -1924,6 +1924,25 @@ list first, i.e. tag audit goes first, GW-25 goes last:
   confidence, promote earlier.
 - **Case 006 OOS-boundary hardening** if not caught downstream
   by GW-18/20 in Sprint 3.
+- **Post-migration schema verification.** Added 2026-09-17 from
+  GW-25's smoke session. `create table if not exists` in
+  migration 004 silently skipped a pre-existing (stale-schema)
+  `traces` table; the gap surfaced only when the smoke's
+  INSERT hit a missing column. Same "plausible output, no
+  underlying signal" family as GW-01 (embeddings) and the
+  ingest report (Sprint 3 Story 1). Fix: after any `create
+  table` migration, verify the DB schema matches the migration
+  file. Could be a runbook step, a helper script, or a
+  CI:migration-lint gate. See Story 3 close-out for detail.
+- **Enable RLS on `chunks` + `documents`.** Added 2026-09-17
+  from the same smoke session. Migration 004 originally
+  matched the existing pattern (no RLS) — Supabase SQL editor
+  flagged the gap on `traces`, fixed in-flight. Same gap
+  applies to `chunks` and `documents`. Not a live exposure
+  (migration 001 grants nothing to anon/authenticated) but
+  the belt-and-braces gap is real. Fix: migration 005 enables
+  RLS with no policies on both tables; service_role continues
+  to work, anon/authenticated stay default-deny.
 - **Anything from the Sprint 3 deferral order above that got
   cut mid-Sprint 3.**
 
@@ -2394,3 +2413,99 @@ consequence + AAD entry), `6130621` (Story 1 sign-off).
   `tool_calls: []` in every case because NoopPlanner +
   StubToolRegistry are still in place; when real tools land in
   Story 4/5/6, this smoke test is worth re-running.
+
+### Story 3 close-out — GW-25 trace persistence (2026-09-17)
+
+**Story:** ADR-0015. Wire `TraceSink` port to a Supabase-backed
+adapter that persists every span (router, safety-gate, tool-
+call, retrieval, synthesis, refusal, rerank) into a `traces`
+table. GW-18's tool loop was already emitting spans through
+the port; this story is where they land.
+
+**As-measured result — mandatory smoke passed against real
+Postgres.**
+
+The ADR named this smoke as required for close-out because
+GW-25 is producer-ahead-of-consumer (nothing reads traces until
+GW-26) — the pattern that bit GW-01 (embeddings) and stale
+UUIDs. Running the smoke *in the same session as the code
+landed* is the mitigation.
+
+Smoke script at
+`packages/adapters/scripts/smoke-supabase-trace-sink.ts` runs
+the adapter directly against Supabase (bypasses the tool loop,
+which currently emits zero spans because NoopPlanner terminates
+before invoking a tool). Every column verified with correct
+type + value:
+
+- `trace_id`, `span_id`, `parent_span_id`, `kind`,
+  `duration_ms`, `error` — all matched.
+- `attributes` (JSONB) — deep-equal check passed.
+- Duplicate `(trace_id, span_id)` insert triggered Postgres
+  23505 → narrow catch in the adapter → counter=1 → no throw
+  → log line fired with the offending trace_id/span_id/kind.
+  Proves ADR-0015 §Decision 10's narrow-catch behaviour
+  against real Postgres, not just against the mock in the
+  unit tests.
+- Cleanup deleted the smoke rows; DB back to zero rows.
+
+**Commits:** `96627aa` (initial code — adapter, migration,
+unit tests, wire-up), plus the Story 3 close-out commit that
+ships the smoke script + updated migration (RLS) + ADR-0015 §7
+correction + this sprint-log entry.
+
+**Two follow-up findings from the smoke session — both
+"plausible output, no underlying signal" family instances.**
+
+1. **`create table if not exists` silent-skip.** Migration 004
+   used `create table if not exists`. A pre-existing (empty)
+   `traces` table was already in Supabase with a stale schema
+   (missing `kind`, extra `id` column) — provenance unclear,
+   nothing in `supabase/migrations/` creates a `traces` table
+   other than 004. Our migration ran, reported success,
+   silently skipped over the existing table. The gap only
+   surfaced when the smoke's INSERT tried to reference the
+   `kind` column and got `PGRST204 Could not find the 'kind'
+   column`. Same shape as GW-01 (report claimed embeddings
+   stored, they weren't) and GW-04 (report claimed embedded,
+   nothing persisted). **Follow-up: post-migration schema
+   verification.** After any `create table` migration, verify
+   the schema in the DB matches the schema in the migration
+   file. Could be a runbook step, a helper script, or a
+   `CI:migration-lint` gate. Named as a Sprint 4 candidate
+   below.
+
+2. **`chunks` + `documents` don't have RLS enabled.** The
+   Supabase SQL editor caught the RLS gap on `traces` when
+   the operator was about to apply migration 004 — flagged
+   the missing `alter table ... enable row level security`.
+   Fixed in migration 004 (RLS enabled with no policies;
+   service_role bypasses; anon/authenticated default-deny).
+   But the check applied to `chunks` + `documents` would fail
+   the same way — neither has RLS enabled. Not a live
+   security issue (no grants to anon/authenticated in
+   migration 001, so nothing is exposed) but the belt-and-
+   braces gap is real. **Follow-up: enable RLS on `chunks`
+   + `documents` retroactively.** One migration `005_enable_
+   rls_on_core_tables.sql`. Non-destructive. Named as a Sprint
+   4 candidate below.
+
+**Producer-ahead-of-consumer risk — mitigated for now.**
+
+GW-25 writes; nothing reads until GW-26 (staff console). The
+smoke's direct adapter-to-Postgres verification proves the
+write path independently of any consumer. When GW-26 lands,
+its own close-out will be the first "read produces the
+expected shape" verification. In the meantime, `traces` will
+grow as Sprint 3 subsequent stories (GW-20 stock lookup,
+etc.) emit real tool-call spans through the loop. The
+sprint-log Story 4+ close-outs should include a "select
+count(*) from traces" check to confirm rows are landing.
+
+**Sprint 4 candidates added by this story:**
+
+- Post-migration schema verification (finding 1). Automated
+  or runbook-level; either way, the next `create table if
+  not exists` slip is caught before the smoke.
+- Enable RLS on `chunks` + `documents` (finding 2). Migration
+  005, non-destructive.
