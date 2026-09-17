@@ -1,107 +1,57 @@
-# NFCS out-of-scope categories — data for GW-20 stock lookup tool
+# NFCS out-of-scope brands — data for GW-20 stock lookup tool.
 #
-# What this is: the SME-curated list of product categories and brands
-# that NFCS confirms they will NOT source. Used by the stock-lookup
-# tool (ADR-0016) to distinguish `unavailable` from `orderable`.
+# What this is: brands NFCS will not stock for COMMERCIAL reasons
+# (competitive relationships with local stockists). Substring match
+# on the customer's productQuery → tool returns `unavailable` with
+# the entry's `reason` returned as `outOfScopeReason`.
 #
-# How it's used: when the tool's retrieval-based catalogue match
-# fails, it checks this list. A pattern match here → `unavailable`
-# with the entry's `reason` returned as `outOfScopeReason`. No match
-# here → `orderable` (NFCS's core value prop is "we don't stock it
-# but we can order it in for you"; the default is order-in-able).
+# Distinct from `data/nfcs-pending.yaml`, which captures categories
+# NFCS plans to hold once a pre-condition is met (regulatory
+# accreditation, unit lease, etc.).
 #
-# ---
-# IMPORTANT: seed entries are PROVISIONAL / TEST-DERIVED.
+# Provenance: SME conversation 2026-09-17 with NFCS shop owner. See
+# docs/adr/0016-stock-lookup-three-state.md §SME correction for the
+# full arc — the previous version of this file (2026-09-17 morning)
+# was category-based (wormers, electric fencing, Simple Systems),
+# seeded from the golden dataset. That seed reasoned on the wrong
+# axis; the SME correction moved the reasoning to brand-commercial.
 #
-# The initial entries here are derived from the golden dataset's
-# `three-state-stock` cases (003 wormers, 008 electric fencing,
-# 042 Simple Systems red bag). Using them to measure the tool's
-# accuracy against those same cases is circular — the list matches
-# the cases that seeded it.
-#
-# Entries carry `provisional: test-derived` until either:
-#   (a) a five-minute SME conversation with NFCS confirms the
-#       category is genuinely out of their sourcing scope, OR
-#   (b) an SME-added category coincidentally overlaps with one of
-#       these test-derived entries.
-#
-# The flag comes off in that moment. Story 4 close-out records
-# whether the SME conversation happened; if it did not, the
-# stock_status_correct metric's floor is annotated as circular.
-#
-# See ADR-0016 §1 for the reasoning + un-hack.
-# ---
-#
-# Editing: additions are curation, not code. A shop-side change
-# (NFCS starts stocking electric fencing) means removing the
-# corresponding entry here, then re-running the eval harness to
-# confirm the golden case flips. This file is loaded at process
-# start; changes require a process restart to take effect.
+# Editing:
+# - Adding a brand: coordinate with the shop first. Should carry a
+#   `reason` naming the local stockist or the commercial context.
+# - Removing a brand (e.g. Aivly closes and NFCS picks up the range):
+#   remove the entry; re-run the harness; confirm the customer-facing
+#   answer for that brand flips from "we don't carry X, Aivly stocks
+#   it locally" to whatever the retrieval + pending model produces.
+# - Additions are curation, not code. This file is loaded at process
+#   start; changes require a process restart.
 #
 # Schema per entry:
-#   name:        short human label for the category / brand
-#   matcher:     'substring' — case-insensitive substring match on
-#                the customer's productQuery string. Only shape
-#                supported today; add more when the shape of a real
-#                won't-source category demands it (e.g. structured
-#                category-tag matching once we have a tag ontology).
-#   pattern:     the substring to match
-#   reason:      short human-readable reason. Returned to the tool
-#                caller as outOfScopeReason. Kept SME-facing prose,
-#                not user-facing copy — synthesis composes the
-#                customer-facing wording.
-#   provisional: 'test-derived' when seeded from the golden set,
-#                omitted when SME-confirmed.
-#   provenance:  free text — case IDs the seed came from, or the
-#                SME conversation date. Traceable back to source.
+#   name:    short human label for the brand
+#   matcher: 'substring' — case-insensitive substring match on the
+#            customer's productQuery string. Only shape supported
+#            today.
+#   pattern: the substring to match
+#   reason:  short SME-facing prose. Returned to the tool caller as
+#            outOfScopeReason. Synthesis composes the customer-facing
+#            wording; the reason names the commercial context so
+#            synthesis can produce a genuinely-useful answer like
+#            "we don't carry LeMieux; Aivly stocks it locally"
+#            rather than a bare refusal.
 
 entries:
-  - name: wormers
+  - name: Ariat
     matcher: substring
-    pattern: wormer
+    pattern: Ariat
     reason: >-
-      Veterinary anthelmintic products require a vet script or
-      SQP (suitably-qualified person) authorisation to sell. NFCS
-      does not hold SQP status and does not stock or source
-      wormers.
-    provisional: test-derived
-    provenance: >-
-      Seeded from golden case product-003-wormers ("Hi do you
-      stock wormers"). Prohibited claims list includes "we stock
-      wormers", "we sell wormers", "we have wormers", "wormers
-      are available", indicating the shop does not carry or
-      source them.
+      NFCS does not stock Ariat. Aivly (local stockist) carries the
+      Ariat range; customers should be directed there for Ariat
+      products. Commercial decision, not a category rule.
 
-  - name: electric fencing
+  - name: LeMieux
     matcher: substring
-    pattern: electric fencing
+    pattern: LeMieux
     reason: >-
-      Electric-fencing equipment (energisers, tape, posts, gate
-      handles) is out of NFCS's product category. They deal in
-      feed, hay, bedding, tack, and horse-care consumables — not
-      field equipment.
-    provisional: test-derived
-    provenance: >-
-      Seeded from golden case product-008-electric-fencing ("do
-      you currently stock electric fencing?"). Prohibited claims
-      list includes "we stock electric fencing", "we sell
-      electric fencing", "we have electric fencing", "electric
-      fencing is available", indicating the shop does not carry
-      or source it.
-
-  - name: Simple Systems (brand)
-    matcher: substring
-    pattern: Simple Systems
-    reason: >-
-      NFCS confirmed they cannot source from Simple Systems as a
-      supplier. Response to case 042 was apologetic ("sadly not")
-      plus a substitute stock list — different shape from the
-      orderable pattern where the shop offers to source in.
-    provisional: test-derived
-    provenance: >-
-      Seeded from golden case product-042-simple-systems-grass-
-      pellets-unavailable ("Do you have Simple systems red bag
-      grass pellets? Thanks"). Prohibited claims list is
-      two-sided — neither "we stock" nor "we can order" —
-      indicating a genuine won't-source rather than
-      not-currently-held.
+      NFCS does not stock LeMieux. Aivly (local stockist) carries the
+      LeMieux range; customers should be directed there for LeMieux
+      products. Commercial decision, not a category rule.

@@ -12,7 +12,9 @@ export { StubToolRegistry } from './tool-registry/stub-tool-registry.js';
 export {
   DEFAULT_MIN_MATCH_SCORE,
   ProductStockLookupTool,
+  loadStatusOverrideList,
   loadOutOfScopeList,
+  type StatusOverrideEntry,
   type StockLookupResult,
   type StockStatus,
 } from './tool-registry/product-stock-lookup-tool.js';

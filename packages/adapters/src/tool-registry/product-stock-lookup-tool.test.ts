@@ -2,9 +2,9 @@
  * Unit tests for ProductStockLookupTool. GW-20 / ADR-0016.
  *
  * Uses stub retriever inline — no Supabase, no real corpus. Tests
- * every branch of the three-state decision logic (§2), the
- * minMatchScore floor (§3), the exact-beats-unavailable ordering
- * rule (§2), and the structured-error paths for arg validation (§5).
+ * every branch of the four-state decision logic (§2), the ordering
+ * (unavailable > pending > orderable), the minMatchScore floor (§3),
+ * and the structured-error paths for arg validation (§5).
  *
  * The mandatory Supabase smoke (task #8) covers the "does this work
  * against a real corpus" question. This file covers "is the decision
@@ -38,18 +38,30 @@ function makeChunk(overrides: Partial<RetrievedChunk> & { score: number }): Retr
   };
 }
 
+// Test fixtures invented for tests, not copied from the SME-curated
+// yaml files or the golden set — eval-hygiene rule (same as router's
+// rules.test.ts and llm-classifier.ts).
 const OUT_OF_SCOPE = [
   {
-    name: 'wormers',
+    name: 'TestBrandA',
     matcher: 'substring' as const,
-    pattern: 'wormer',
-    reason: 'vet-script product, NFCS does not sell',
+    pattern: 'TestBrandA',
+    reason: 'not stocked commercially; alternative local stockist carries the range',
   },
   {
-    name: 'electric fencing',
+    name: 'TestBrandB',
     matcher: 'substring' as const,
-    pattern: 'electric fencing',
-    reason: 'out of NFCS product category',
+    pattern: 'TestBrandB',
+    reason: 'not stocked commercially',
+  },
+];
+
+const PENDING = [
+  {
+    name: 'test-pending-category',
+    matcher: 'substring' as const,
+    pattern: 'test-pending',
+    reason: 'pending regulatory pre-condition; committed to stock once resolved',
   },
 ];
 
@@ -114,27 +126,35 @@ describe('ProductStockLookupTool', () => {
     });
 
     it('returns UNAVAILABLE when out-of-scope pattern matches (case-insensitive substring)', async () => {
-      const tool = new ProductStockLookupTool(makeRetriever([]), OUT_OF_SCOPE);
+      const tool = new ProductStockLookupTool(makeRetriever([]), OUT_OF_SCOPE, PENDING);
       const result = await tool.invoke({
         name: 'product.stock_lookup',
-        args: { productQuery: 'do you sell WORMERS' },
+        args: { productQuery: 'do you sell TESTBRANDA jackets' },
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       const value = result.value as StockLookupResult;
       expect(value.status).toBe('unavailable');
-      expect(value.outOfScopeReason).toBe('vet-script product, NFCS does not sell');
+      expect(value.outOfScopeReason).toBe(
+        'not stocked commercially; alternative local stockist carries the range',
+      );
+      expect(value.pendingReason).toBeNull();
     });
 
-    it('returns UNAVAILABLE on the "electric fencing" pattern (multi-word substring)', async () => {
-      const tool = new ProductStockLookupTool(makeRetriever([]), OUT_OF_SCOPE);
+    it('returns PENDING when pending pattern matches (SME correction 2026-09-17)', async () => {
+      const tool = new ProductStockLookupTool(makeRetriever([]), OUT_OF_SCOPE, PENDING);
       const result = await tool.invoke({
         name: 'product.stock_lookup',
-        args: { productQuery: 'do you stock electric fencing kits' },
+        args: { productQuery: 'do you sell test-pending items' },
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect((result.value as StockLookupResult).status).toBe('unavailable');
+      const value = result.value as StockLookupResult;
+      expect(value.status).toBe('pending');
+      expect(value.pendingReason).toBe(
+        'pending regulatory pre-condition; committed to stock once resolved',
+      );
+      expect(value.outOfScopeReason).toBeNull();
     });
 
     it('EXACT beats UNAVAILABLE — the corpus wins over the out-of-scope list', async () => {
@@ -146,19 +166,63 @@ describe('ProductStockLookupTool', () => {
         makeRetriever([
           makeChunk({
             score: 0.8,
-            chunkId: 'exact-wormer-chunk',
-            metadata: { handle: 'test-wormer', title: 'Some Actual Wormer' },
+            chunkId: 'exact-brand-a-chunk',
+            metadata: { handle: 'test-brand-a-item', title: 'Some Actual TestBrandA Item' },
           }),
         ]),
         OUT_OF_SCOPE,
+        PENDING,
       );
       const result = await tool.invoke({
         name: 'product.stock_lookup',
-        args: { productQuery: 'do you sell wormers' },
+        args: { productQuery: 'do you sell TestBrandA items' },
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect((result.value as StockLookupResult).status).toBe('exact');
+    });
+
+    it('UNAVAILABLE beats PENDING — a permanent brand block overrides a category pending', async () => {
+      // ADR-0016 §2: if a query matches BOTH the out-of-scope list
+      // AND the pending list (e.g. a LeMieux fencing product when
+      // fencing is pending F1), the brand blocker wins. Brand is
+      // permanent; the pending category is temporary.
+      const tool = new ProductStockLookupTool(makeRetriever([]), OUT_OF_SCOPE, PENDING);
+      const result = await tool.invoke({
+        name: 'product.stock_lookup',
+        args: { productQuery: 'TestBrandA test-pending combo item' },
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const value = result.value as StockLookupResult;
+      expect(value.status).toBe('unavailable');
+      expect(value.pendingReason).toBeNull();
+    });
+
+    it('PENDING beats ORDERABLE — a committed pre-condition is a better answer than "we can source that"', async () => {
+      // Absent explicit config, orderable is the fall-through default.
+      // A pending entry should be preferred so the customer answer
+      // names the specific pre-condition rather than the generic
+      // sourcing offer.
+      const tool = new ProductStockLookupTool(makeRetriever([]), OUT_OF_SCOPE, PENDING);
+      const result = await tool.invoke({
+        name: 'product.stock_lookup',
+        args: { productQuery: 'do you have test-pending stock yet' },
+      });
+      expect(result.ok).toBe(true);
+      expect((result as { value: StockLookupResult }).value.status).toBe('pending');
+    });
+
+    it('constructor default: no pending list argument → no pending matches, falls to orderable', async () => {
+      // Backwards-compatible default — old three-state callers work
+      // without needing to pass the pending list.
+      const tool = new ProductStockLookupTool(makeRetriever([]), OUT_OF_SCOPE);
+      const result = await tool.invoke({
+        name: 'product.stock_lookup',
+        args: { productQuery: 'test-pending item' },
+      });
+      expect(result.ok).toBe(true);
+      expect((result as { value: StockLookupResult }).value.status).toBe('orderable');
     });
   });
 

@@ -1,0 +1,58 @@
+# NFCS pending stock — data for GW-20 stock lookup tool.
+#
+# What this is: categories or brands NFCS has committed to hold but
+# does not yet stock, gated on a specific pre-condition (regulatory
+# accreditation, unit lease, supplier onboarding). Substring match
+# on the customer's productQuery → tool returns `pending` with the
+# entry's `reason` returned as `pendingReason`.
+#
+# Distinct from `data/nfcs-out-of-scope.yaml`, which captures brands
+# NFCS will not carry at all (commercial won't-stock decisions).
+#
+# Distinct from the retrieval-negative default (`orderable`), where
+# the shop can source individual products on customer request. A
+# `pending` entry names both the pre-condition and the plan; an
+# `orderable` result just means "ask and we'll try to get it in."
+#
+# Provenance: SME conversation 2026-09-17 with NFCS shop owner. See
+# docs/adr/0016-stock-lookup-three-state.md §SME correction for
+# context and §Prediction for the F1-electric-fencing drift that
+# will remove one of these entries in mid-Sprint 3.
+#
+# Editing:
+# - Adding a pending entry: shop tells us they're going to stock X
+#   once Y happens. Add here with `reason` naming both.
+# - Removing an entry (the pre-condition is met): remove the entry,
+#   re-ingest the product content, re-run the harness. The tool
+#   flips from `pending` to `exact` for that item. See ADR-0016
+#   §Prediction for the electric-fencing worked example.
+# - Additions are curation, not code. Loaded at process start.
+#
+# Schema per entry — same shape as nfcs-out-of-scope.yaml, so the
+# loader shares code. `reason` returned as `pendingReason` on the
+# tool result; synthesis composes copy like "we don't currently
+# stock X — we're waiting on [reason]; we can let you know when it
+# lands" rather than the generic orderable "we can source that for
+# you."
+
+entries:
+  - name: wormers
+    matcher: substring
+    pattern: wormer
+    reason: >-
+      NFCS needs BETA (British Equestrian Trade Association)
+      membership to sell veterinary wormers. Accreditation is in
+      progress; the shop plans to stock wormers once membership is
+      confirmed. This is a licence gate, not a category rule.
+
+  - name: electric fencing
+    matcher: substring
+    pattern: electric fencing
+    reason: >-
+      NFCS is waiting on the unit F1 lease (currently has D1;
+      F1 opens the additional footprint that will hold fencing
+      stock). Expected ~2026-09-29 per SME conversation
+      2026-09-17. When F1 opens and fencing lands in the shop's
+      product catalogue, this entry is removed and the tool
+      returns `exact` for fencing queries. See ADR-0016
+      §Prediction.

@@ -2,22 +2,36 @@
  * ProductStockLookupTool. GW-20 / ADR-0016.
  *
  * The load-bearing product-intent tool. Answers "does NFCS stock X"
- * with three states:
+ * with four states (SME correction 2026-09-17 — original three-state
+ * model didn't have a home for "not-yet, committed to a specific
+ * pre-condition"; see ADR-0016 §"Why pending is a distinct status"):
  *
  *   - `exact`       — chunks table has a matching product-type chunk
  *                     whose top-1 hybrid score exceeds `minMatchScore`.
- *   - `orderable`   — no chunk match AND productQuery does not match
- *                     the SME-curated out-of-scope list. NFCS's core
- *                     value prop is "we don't stock it in-store but we
- *                     can order it in for you" — the default is
- *                     order-in-able.
- *   - `unavailable` — no chunk match AND productQuery matches the
- *                     out-of-scope list. The tool returns the entry's
- *                     `reason` as `outOfScopeReason`.
+ *   - `pending`     — no chunk match AND productQuery matches an
+ *                     entry in `nfcs-pending.yaml` (temporary
+ *                     pre-condition, e.g. wormers pending BETA
+ *                     membership, fencing pending unit-F1 lease).
+ *                     The tool returns the entry's `reason` as
+ *                     `pendingReason`.
+ *   - `orderable`   — no chunk match, not pending, not out-of-scope.
+ *                     NFCS's default posture — the shop can source
+ *                     on customer request.
+ *   - `unavailable` — no chunk match AND productQuery matches an
+ *                     entry in `nfcs-out-of-scope.yaml` (permanent
+ *                     commercial won't-stock, e.g. Ariat / LeMieux
+ *                     because Aivly stocks them locally). The tool
+ *                     returns the entry's `reason` as
+ *                     `outOfScopeReason`.
+ *
+ * Ordering: `exact` beats `unavailable` beats `pending` beats
+ * `orderable` — a shipped product overrides policy; a permanent
+ * brand block overrides a temporary category pending; a committed
+ * pre-condition overrides the generic sourcing offer.
  *
  * See ADR-0016 for:
- *   - §1 chunks-as-catalogue reasoning + why not the `products` table.
- *   - §2 decision logic + result shape.
+ *   - §1 chunks-as-catalogue reasoning + two-file override model.
+ *   - §2 decision logic + result shape + four-state argument.
  *   - §3 `minMatchScore` — provisional 0.5 default until Story 4
  *        close-out measures a data-driven floor.
  *   - §5 error contract: infra failure throws; structured errors for
@@ -26,6 +40,10 @@
  *        retrieval with a threshold. The load-bearing claim is
  *        "stock status is sourced from the catalogue, not from model
  *        knowledge", not "deterministic".
+ *   - §Prediction: case 008 (electric fencing) is expected to flip
+ *        from `pending` to `exact` in mid-Sprint 3 when unit F1
+ *        opens. Deterministic chunk IDs (ADR-0013) make the
+ *        re-ingest cheap — the Story-1 payoff.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -67,7 +85,7 @@ const MAX_MATCHED_CHUNK_IDS = 5;
  *  general retriever top-K (which serves synthesis, not the tool). */
 const RETRIEVAL_TOP_K = 5;
 
-export type StockStatus = 'exact' | 'orderable' | 'unavailable';
+export type StockStatus = 'exact' | 'orderable' | 'pending' | 'unavailable';
 
 export interface StockLookupResult {
   readonly status: StockStatus;
@@ -75,20 +93,25 @@ export interface StockLookupResult {
   readonly matchedHandle: string | null;
   readonly matchedTitle: string | null;
   readonly outOfScopeReason: string | null;
+  readonly pendingReason: string | null;
   readonly matchScore: number | null;
 }
 
-interface OutOfScopeEntry {
+/**
+ * A status-override entry from either `nfcs-out-of-scope.yaml` or
+ * `nfcs-pending.yaml`. Same shape either way; the file the entry
+ * came from determines the status the tool returns on match.
+ */
+export interface StatusOverrideEntry {
   readonly name: string;
   readonly matcher: 'substring';
   readonly pattern: string;
   readonly reason: string;
-  readonly provisional?: 'test-derived';
   readonly provenance?: string;
 }
 
-interface OutOfScopeFile {
-  readonly entries: readonly OutOfScopeEntry[];
+interface StatusOverrideFile {
+  readonly entries: readonly StatusOverrideEntry[];
 }
 
 interface ProductStockLookupToolArgs {
@@ -102,7 +125,7 @@ export class ProductStockLookupTool implements ToolRegistry {
   private readonly definition: ToolDefinition = {
     name: TOOL_NAME,
     description:
-      'Look up whether NFCS stocks a specific product. Returns three-state stock: exact (held in-store), orderable (not held but within sourcing scope), unavailable (out of sourcing scope).',
+      "Look up whether NFCS stocks a specific product. Returns four-state stock: exact (held in-store), pending (not currently held, committed to a specific pre-condition), orderable (not held but shop can source on request), unavailable (permanent commercial won't-stock — see local stockist).",
     schema: {
       type: 'object',
       additionalProperties: false,
@@ -128,7 +151,8 @@ export class ProductStockLookupTool implements ToolRegistry {
 
   constructor(
     private readonly retriever: Retriever,
-    private readonly outOfScope: readonly OutOfScopeEntry[],
+    private readonly outOfScope: readonly StatusOverrideEntry[],
+    private readonly pending: readonly StatusOverrideEntry[] = [],
   ) {}
 
   list(): readonly ToolDefinition[] {
@@ -183,13 +207,17 @@ export class ProductStockLookupTool implements ToolRegistry {
         // may or may not surface it via metadata; when absent, null.
         matchedTitle: readStringMetadata(top.metadata, 'title'),
         outOfScopeReason: null,
+        pendingReason: null,
         matchScore: top.score,
       };
       return { ok: true, value };
     }
 
-    // No catalogue match at the threshold. Check the out-of-scope list.
-    const scopeHit = matchOutOfScope(productQuery, this.outOfScope);
+    // Ordering per ADR-0016 §2: unavailable beats pending beats
+    // orderable. Check out-of-scope (permanent commercial won't-stock)
+    // first, then pending (temporary pre-condition), then default to
+    // orderable.
+    const scopeHit = matchOverride(productQuery, this.outOfScope);
     if (scopeHit) {
       const value: StockLookupResult = {
         status: 'unavailable',
@@ -197,18 +225,35 @@ export class ProductStockLookupTool implements ToolRegistry {
         matchedHandle: null,
         matchedTitle: null,
         outOfScopeReason: scopeHit.reason,
+        pendingReason: null,
         matchScore: topScore,
       };
       return { ok: true, value };
     }
 
-    // Not held, not out-of-scope → orderable. NFCS's default posture.
+    const pendingHit = matchOverride(productQuery, this.pending);
+    if (pendingHit) {
+      const value: StockLookupResult = {
+        status: 'pending',
+        matchedChunkIds: [],
+        matchedHandle: null,
+        matchedTitle: null,
+        outOfScopeReason: null,
+        pendingReason: pendingHit.reason,
+        matchScore: topScore,
+      };
+      return { ok: true, value };
+    }
+
+    // Not held, not out-of-scope, not pending → orderable.
+    // NFCS's default posture — shop can source on customer request.
     const value: StockLookupResult = {
       status: 'orderable',
       matchedChunkIds: [],
       matchedHandle: null,
       matchedTitle: null,
       outOfScopeReason: null,
+      pendingReason: null,
       matchScore: topScore,
     };
     return { ok: true, value };
@@ -216,19 +261,23 @@ export class ProductStockLookupTool implements ToolRegistry {
 }
 
 /**
- * Load and parse the out-of-scope YAML file. Throws on infra failure
- * (file missing, unparseable) — GW-26's circuit breaker catches at the
- * request boundary. Callers should load once at composition-root, not
+ * Load and parse a status-override YAML file. Both
+ * `nfcs-out-of-scope.yaml` (brand won't-stock) and
+ * `nfcs-pending.yaml` (temporary pre-condition) share this schema;
+ * the file the entries come from determines the status the tool
+ * returns on match. Throws on infra failure (file missing,
+ * unparseable) — GW-26's circuit breaker catches at the request
+ * boundary. Callers should load once at composition-root, not
  * per-invocation.
  */
-export async function loadOutOfScopeList(path: string): Promise<readonly OutOfScopeEntry[]> {
+export async function loadStatusOverrideList(
+  path: string,
+): Promise<readonly StatusOverrideEntry[]> {
   const raw = await readFile(path, 'utf8');
-  const parsed = parseYaml(raw) as OutOfScopeFile | null;
+  const parsed = parseYaml(raw) as StatusOverrideFile | null;
   if (!parsed || !Array.isArray(parsed.entries)) {
-    throw new Error(`out-of-scope YAML at ${path} did not contain a top-level 'entries' array`);
+    throw new Error(`status-override YAML at ${path} did not contain a top-level 'entries' array`);
   }
-  // Structural check — a malformed entry today is a shipping bug we
-  // want loud, not a silent skip.
   for (const [i, entry] of parsed.entries.entries()) {
     if (
       typeof entry.name !== 'string' ||
@@ -237,12 +286,19 @@ export async function loadOutOfScopeList(path: string): Promise<readonly OutOfSc
       entry.matcher !== 'substring'
     ) {
       throw new Error(
-        `out-of-scope YAML entry ${i} malformed: ${JSON.stringify(entry)}. Required: {name: string, matcher: 'substring', pattern: string, reason: string}.`,
+        `status-override YAML entry ${i} at ${path} is malformed: ${JSON.stringify(entry)}. Required: {name: string, matcher: 'substring', pattern: string, reason: string}.`,
       );
     }
   }
   return parsed.entries;
 }
+
+/**
+ * @deprecated Use loadStatusOverrideList directly. Retained under
+ * the previous name for compositional-root wiring landing in a
+ * follow-up commit — will be removed in the next commit.
+ */
+export const loadOutOfScopeList = loadStatusOverrideList;
 
 // ---------- helpers ----------
 
@@ -291,10 +347,10 @@ function readStringMetadata(
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function matchOutOfScope(
+function matchOverride(
   productQuery: string,
-  entries: readonly OutOfScopeEntry[],
-): OutOfScopeEntry | null {
+  entries: readonly StatusOverrideEntry[],
+): StatusOverrideEntry | null {
   const lowered = productQuery.toLowerCase();
   for (const entry of entries) {
     if (entry.matcher === 'substring' && lowered.includes(entry.pattern.toLowerCase())) {
