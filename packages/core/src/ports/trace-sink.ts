@@ -21,6 +21,22 @@ export type SpanKind =
   | 'tool-call'
   | 'refusal';
 
+/**
+ * JSON-shaped value type for span attributes. Widened from the
+ * original scalar-only shape (2026-09-17, Sprint 3 Story 4) so
+ * tool spans can carry structured args + result payloads per
+ * ADR-0016 §6. The underlying storage (Supabase `traces.attributes`
+ * JSONB column) has always accepted nested structures; the type
+ * was overly restrictive.
+ */
+export type SpanAttributeValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly SpanAttributeValue[]
+  | { readonly [key: string]: SpanAttributeValue };
+
 export interface Span {
   readonly traceId: string;
   readonly spanId: string;
@@ -28,7 +44,7 @@ export interface Span {
   readonly kind: SpanKind;
   readonly startedAt: string;
   readonly durationMs: number;
-  readonly attributes: Readonly<Record<string, string | number | boolean>>;
+  readonly attributes: Readonly<Record<string, SpanAttributeValue>>;
   readonly error?: string;
 }
 

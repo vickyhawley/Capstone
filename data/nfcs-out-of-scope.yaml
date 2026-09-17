@@ -1,0 +1,107 @@
+# NFCS out-of-scope categories — data for GW-20 stock lookup tool
+#
+# What this is: the SME-curated list of product categories and brands
+# that NFCS confirms they will NOT source. Used by the stock-lookup
+# tool (ADR-0016) to distinguish `unavailable` from `orderable`.
+#
+# How it's used: when the tool's retrieval-based catalogue match
+# fails, it checks this list. A pattern match here → `unavailable`
+# with the entry's `reason` returned as `outOfScopeReason`. No match
+# here → `orderable` (NFCS's core value prop is "we don't stock it
+# but we can order it in for you"; the default is order-in-able).
+#
+# ---
+# IMPORTANT: seed entries are PROVISIONAL / TEST-DERIVED.
+#
+# The initial entries here are derived from the golden dataset's
+# `three-state-stock` cases (003 wormers, 008 electric fencing,
+# 042 Simple Systems red bag). Using them to measure the tool's
+# accuracy against those same cases is circular — the list matches
+# the cases that seeded it.
+#
+# Entries carry `provisional: test-derived` until either:
+#   (a) a five-minute SME conversation with NFCS confirms the
+#       category is genuinely out of their sourcing scope, OR
+#   (b) an SME-added category coincidentally overlaps with one of
+#       these test-derived entries.
+#
+# The flag comes off in that moment. Story 4 close-out records
+# whether the SME conversation happened; if it did not, the
+# stock_status_correct metric's floor is annotated as circular.
+#
+# See ADR-0016 §1 for the reasoning + un-hack.
+# ---
+#
+# Editing: additions are curation, not code. A shop-side change
+# (NFCS starts stocking electric fencing) means removing the
+# corresponding entry here, then re-running the eval harness to
+# confirm the golden case flips. This file is loaded at process
+# start; changes require a process restart to take effect.
+#
+# Schema per entry:
+#   name:        short human label for the category / brand
+#   matcher:     'substring' — case-insensitive substring match on
+#                the customer's productQuery string. Only shape
+#                supported today; add more when the shape of a real
+#                won't-source category demands it (e.g. structured
+#                category-tag matching once we have a tag ontology).
+#   pattern:     the substring to match
+#   reason:      short human-readable reason. Returned to the tool
+#                caller as outOfScopeReason. Kept SME-facing prose,
+#                not user-facing copy — synthesis composes the
+#                customer-facing wording.
+#   provisional: 'test-derived' when seeded from the golden set,
+#                omitted when SME-confirmed.
+#   provenance:  free text — case IDs the seed came from, or the
+#                SME conversation date. Traceable back to source.
+
+entries:
+  - name: wormers
+    matcher: substring
+    pattern: wormer
+    reason: >-
+      Veterinary anthelmintic products require a vet script or
+      SQP (suitably-qualified person) authorisation to sell. NFCS
+      does not hold SQP status and does not stock or source
+      wormers.
+    provisional: test-derived
+    provenance: >-
+      Seeded from golden case product-003-wormers ("Hi do you
+      stock wormers"). Prohibited claims list includes "we stock
+      wormers", "we sell wormers", "we have wormers", "wormers
+      are available", indicating the shop does not carry or
+      source them.
+
+  - name: electric fencing
+    matcher: substring
+    pattern: electric fencing
+    reason: >-
+      Electric-fencing equipment (energisers, tape, posts, gate
+      handles) is out of NFCS's product category. They deal in
+      feed, hay, bedding, tack, and horse-care consumables — not
+      field equipment.
+    provisional: test-derived
+    provenance: >-
+      Seeded from golden case product-008-electric-fencing ("do
+      you currently stock electric fencing?"). Prohibited claims
+      list includes "we stock electric fencing", "we sell
+      electric fencing", "we have electric fencing", "electric
+      fencing is available", indicating the shop does not carry
+      or source it.
+
+  - name: Simple Systems (brand)
+    matcher: substring
+    pattern: Simple Systems
+    reason: >-
+      NFCS confirmed they cannot source from Simple Systems as a
+      supplier. Response to case 042 was apologetic ("sadly not")
+      plus a substitute stock list — different shape from the
+      orderable pattern where the shop offers to source in.
+    provisional: test-derived
+    provenance: >-
+      Seeded from golden case product-042-simple-systems-grass-
+      pellets-unavailable ("Do you have Simple systems red bag
+      grass pellets? Thanks"). Prohibited claims list is
+      two-sided — neither "we stock" nor "we can order" —
+      indicating a genuine won't-source rather than
+      not-currently-held.

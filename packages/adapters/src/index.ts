@@ -9,6 +9,14 @@ export { rrf, weightedFusion, type FusionInput, type FusionStrategy } from './re
 
 export { StubLanguageModel } from './language-model/stub-language-model.js';
 export { StubToolRegistry } from './tool-registry/stub-tool-registry.js';
+export {
+  DEFAULT_MIN_MATCH_SCORE,
+  ProductStockLookupTool,
+  loadOutOfScopeList,
+  type StockLookupResult,
+  type StockStatus,
+} from './tool-registry/product-stock-lookup-tool.js';
+export { extractProductQuery } from './router/rules.js';
 export { StubTraceSink } from './trace-sink/stub-trace-sink.js';
 export { SupabaseTraceSink } from './trace-sink/supabase-trace-sink.js';
 export { NoopPlanner } from './planner/noop-planner.js';

@@ -40,7 +40,7 @@ export {
   type ToolLoopResult,
   type ToolLoopTermination,
 } from './tool-loop.js';
-export type { TraceSink, Span, SpanKind } from './ports/trace-sink.js';
+export type { TraceSink, Span, SpanKind, SpanAttributeValue } from './ports/trace-sink.js';
 export type {
   CatalogueRepository,
   Product,

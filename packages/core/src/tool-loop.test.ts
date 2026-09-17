@@ -351,6 +351,11 @@ describe('runToolLoop — trace emission', () => {
     expect(span.attributes['iteration']).toBe(0);
     expect(span.attributes['ok']).toBe(true);
     expect(span.attributes['rationale']).toBe('product intent, extract handle');
+    // ADR-0014 §Tracing is native + ADR-0016 §6 — span carries args
+    // + value so a trace reader can reconstruct the invocation without
+    // needing to re-run the tool.
+    expect(span.attributes['args']).toEqual({ handle: 'aubiose' });
+    expect(span.attributes['value']).toEqual({ in_stock: true });
   });
 
   it('trace-sink failure does not fail the loop (best-effort port contract)', async () => {

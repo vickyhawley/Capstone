@@ -40,7 +40,7 @@ import type { Planner, PlannerContext, ToolInvocationRecord } from './ports/plan
 import type { RetrievedChunk } from './ports/retriever.js';
 import type { RouterDecision, RouterQuery } from './ports/router.js';
 import type { ToolRegistry } from './ports/tool-registry.js';
-import type { Span, TraceSink } from './ports/trace-sink.js';
+import type { Span, SpanAttributeValue, TraceSink } from './ports/trace-sink.js';
 
 export interface ToolLoopDeps {
   readonly planner: Planner;
@@ -196,6 +196,17 @@ export async function runToolLoop(
     // must not fail the parent request, so swallow. `parentSpanId`
     // is spread conditionally because `exactOptionalPropertyTypes`
     // won't let us pass `undefined` to an optional field.
+    // ADR-0014 §Tracing is native + ADR-0016 §6 both require the
+    // span to carry enough of the invocation to reconstruct what
+    // the tool call did — args in, value or error out. GW-25's
+    // JSONB attributes column absorbs this without a schema change.
+    //
+    // Cast to SpanAttributeValue at this boundary: tool args and
+    // ok:true values are typed as `unknown` at the port to keep
+    // tool authors' surface flexible, but they are already required
+    // to be JSON-shaped (they flow through the planner's LLM JSON
+    // schema and the tool loop back to the model). At this
+    // boundary we trust that contract.
     const span: Span = {
       traceId: input.traceId,
       spanId: currentSpanId,
@@ -205,9 +216,12 @@ export async function runToolLoop(
       durationMs: duration,
       attributes: {
         tool_name: decision.toolCall.name,
+        args: decision.toolCall.args as SpanAttributeValue,
         iteration,
         ok: result.ok,
-        ...(result.ok ? {} : { error: result.error, retryable: result.retryable }),
+        ...(result.ok
+          ? { value: result.value as SpanAttributeValue }
+          : { error: result.error, retryable: result.retryable }),
         ...(decision.rationale ? { rationale: decision.rationale } : {}),
       },
     };
