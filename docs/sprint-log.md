@@ -2647,3 +2647,93 @@ Total Story 4 tasks now: 12. Sequencing: 1→2 (router changes),
 — blocks smoke), 11 (SME conversation — can run in parallel
 with 4-7), 12 (extraction metric — can run alongside 7), 8→9
 (smoke + baseline), 10 (close-out).
+
+### Story 4 mid-implementation — SME correction adds a fourth state (2026-09-17)
+
+Task #11 (SME conversation on real won't-source categories)
+ran ahead of task #4, and the answer inverted the model.
+Recording here because the correction reshapes the tool
+before the smoke, not after.
+
+**What the SME said:**
+
+- The permanent won't-stock list is **two brands**, Ariat and
+  LeMieux, both because Aivly stocks them locally. It is a
+  competitive-relationship decision, not a category rule.
+- **Wormers are pending**, not unavailable — waiting on BETA
+  membership. The shop plans to stock them.
+- **Electric fencing is pending**, not unavailable — waiting
+  on the unit F1 lease. Expected ~2026-09-29 (~12 days from
+  today), mid-Sprint 3.
+- Case 042 (Simple Systems) is mis-classified. Not on the
+  permanent won't-stock list. Whether it's pending or
+  orderable needs a follow-up.
+
+**Consequence: three states → four states.** ADR-0016 §2
+rewritten. New status `pending` sits between `orderable` and
+`unavailable`. Ordering: `exact` > `unavailable` > `pending`
+> `orderable`. Rationale (ADR-0016 §"Why pending is a
+distinct status"): if `pending` folded under `orderable`, the
+metric `stock_status_correct` couldn't distinguish "we can
+source that" from "we've committed to stock that once Y
+happens" — different customer answers, different failure
+modes. Two entries, two synthesis shapes, worth the extra
+state.
+
+**Files touched by the correction:**
+
+- `data/nfcs-out-of-scope.yaml` rewritten — two entries
+  (Ariat, LeMieux), no provisional flag, SME-sourced.
+- `data/nfcs-pending.yaml` new — two entries (wormers,
+  electric fencing) with `pendingReason` prose.
+- `packages/adapters/src/tool-registry/product-stock-lookup-
+  tool.ts` — status enum widened, decision logic reordered,
+  new `pendingReason` field on the result.
+- `product-stock-lookup-tool.test.ts` — 105 tests (was 102);
+  new cases: pending-returns, unavailable-beats-pending,
+  pending-beats-orderable, constructor-default-no-pending-arg.
+- `docs/adr/0016-stock-lookup-three-state.md` — §1 (two files),
+  §2 (four states + ordering), §"Why pending is a distinct
+  status," §"SME correction," §"Prediction."
+
+**Negative side of `three-state-stock` now has zero confirmed
+real-traffic cases.** Everything originally labelled "cannot
+supply" turned out to be "not-yet." The golden dataset does
+not currently contain a confirmed `unavailable` case. Sprint 4
+follow-up: solicit a LeMieux / Ariat customer query from the
+SME to anchor the shape.
+
+### F1 prediction — case 008 flips inside the capstone window
+
+Written down before it happens, per the "record predictions to
+verify" discipline. Full detail in ADR-0016 §Prediction.
+
+- **Predicted trigger:** NFCS takes possession of unit F1
+  ~2026-09-29. Fencing stock ships to F1 shortly after.
+- **Predicted case shape flip:** case 008 (electric fencing)
+  goes `pending` → `exact` once fencing chunks land in the
+  corpus.
+- **Predicted metric behaviour:** case 008 = 1.0 pre-F1 under
+  corrected label `pending`. Post-F1 without re-ingest = 0.0
+  (tool returns `pending`, expected `exact`). Post-F1 with
+  re-ingest + relabel = 1.0 under `exact`.
+- **Story 1 payoff:** ADR-0013's deterministic chunk IDs make
+  the re-ingest idempotent. Same product content → same chunk
+  ID → traces and citations keep working. The F1 event is the
+  first real end-to-end exercise of the deterministic-ID path.
+- **Fallback:** if F1 slips past 2026-10-05 or the capstone
+  deadline forces it, freeze the corpus at 2026-09-17 and note
+  case 008 was measured pre-F1. Cost: lose the drift
+  measurement. Benefit: capstone-window determinism.
+
+**Task #13 added: F1 drift verification.** Post-F1 re-ingest,
+case-008 relabel, `nfcs-pending.yaml` electric-fencing entry
+removed, harness re-run, sprint-log entry recording the
+observed drift. Sequenced *after* Story 4 close-out — this
+task is contingent on F1 opening within the window; the
+fallback closes it out if not. Owner: Vix Hawley.
+
+**Total Story 4 tasks now: 13.** Sequencing unchanged for
+1-12; task #13 runs after case-008 has been measured in its
+`pending` shape (i.e. after task #9 baseline) and before the
+capstone close.

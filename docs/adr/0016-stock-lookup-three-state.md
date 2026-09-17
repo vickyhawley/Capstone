@@ -98,7 +98,7 @@ the plan assumed:
 
 **Seven decisions.**
 
-### 1. Data source: chunks table + SME-curated out-of-scope list
+### 1. Data source: chunks table + two SME-curated status-override files
 
 The tool reads:
 
@@ -107,41 +107,47 @@ The tool reads:
   Match uses hybrid retrieval (dense + BM25 with RRF from
   ADR-0001) filtered to product-type chunks. No new index, no
   new query path.
-- `data/nfcs-out-of-scope.yaml` — a small SME-curated file
-  listing categories and brands NFCS confirms they will not
-  source.
+- `data/nfcs-out-of-scope.yaml` — brands NFCS will not stock
+  for **commercial** reasons (competitive relationships with
+  local stockists). Substring match on productQuery →
+  `unavailable`.
+- `data/nfcs-pending.yaml` — categories/brands NFCS is not yet
+  stocking but has committed to, gated on a specific pre-
+  condition (regulatory accreditation, unit lease, supplier
+  onboarding). Substring match → `pending` (see §2 for why this
+  is a distinct status).
 
-**The seed is provisional and must not close the loop against
-the golden set alone.** Deriving the initial entries from cases
-003 (wormers), 008 (electric fencing), 042 (Simple Systems)
-makes the seed circular — `stock_status_correct` would hit 1.00
-on those cases by construction because the list matches itself.
-Any threshold measured against that shape is meaningless: it's
-"the list correctly recognises entries in the list," not "the
-list correctly captures NFCS's sourcing scope."
+**The initial seed was corrected 2026-09-17 by an SME
+conversation.** The Story-4 kickoff drafted this ADR with a
+category-based `nfcs-out-of-scope.yaml` seeded from golden cases
+003 (wormers), 008 (electric fencing), 042 (Simple Systems).
+That seed reasoned on the wrong axis. See §"SME correction
+2026-09-17" at the end of this ADR for the full findings; the
+short version:
 
-The un-hack:
+- The only permanent won't-stock brands NFCS confirmed are
+  **Ariat** and **LeMieux**, both because Aivly stocks them
+  locally. Category-based rules (wormers, fencing) do not
+  match how the shop reasons about scope.
+- Cases 003 (wormers) and 008 (electric fencing) are "not-yet",
+  not "cannot supply." Wormers pend BETA membership; electric
+  fencing pends the shop's unit-F1 lease (~12 days out).
+- Case 042 (Simple Systems) is also mis-classified —
+  Simple Systems is not on the permanent won't-stock list.
+  Awaiting SME follow-up on whether it's pending or orderable.
 
-- Ship the provisional seed (cases 003, 008, 042) marked
-  `provisional: test-derived` in the YAML so future readers
-  don't mistake it for validated data.
-- **Before Story 4 close-out**, a five-minute conversation with
-  NFCS gets the actual won't-source categories from the shop
-  owner. This turns the metric from circular into real.
-- The SME-derived entries land in the same YAML with the
-  provisional flag removed. Golden-set-derived entries retain
-  the flag until a golden-case coincidentally happens to test
-  one of the SME categories.
-- Story 4 close-out records which entries were provisional vs
-  SME-sourced and whether the SME conversation happened. If it
-  did not happen, the metric's floor is annotated as
-  "circular — SME conversation still owed" and re-measured
-  once the seed is real.
+Both YAML files ship as SME-sourced content, not
+provisional-test-derived. The circular-seed problem the earlier
+draft flagged is resolved by grounding the entries in the shop's
+actual sourcing model, not in the cases that were about to
+measure it.
 
-Additions to the list after Sprint 3 are curation, not code.
+Additions to either file after Sprint 3 are curation, not code.
 The point of the YAML is that a business-fact change doesn't
 require a code change — the shop owner adds a line, ingestion
-picks it up on next boot.
+picks it up on next boot. Migration from pending to stocked
+(the F1 prediction below) is: remove the pending entry,
+re-ingest, done.
 
 The `products` table stays in schema for Sprint 3 (removing it
 requires a migration that touches Sprint 1 code, out of scope
@@ -156,16 +162,17 @@ of truth for what NFCS holds; forcing a second copy is exactly
 the "producer-ahead-of-consumer" fragility ADR-0015 warned
 about, in advance.
 
-### 2. Three-state semantics
+### 2. Four-state semantics — pending is distinct from orderable
 
 ```
 tool.args:  { productQuery: string, minMatchScore?: number }
 tool.result (ok:true, value):
-  { status: 'exact' | 'orderable' | 'unavailable',
+  { status: 'exact' | 'orderable' | 'pending' | 'unavailable',
     matchedChunkIds: string[],
     matchedHandle: string | null,
     matchedTitle: string | null,
-    outOfScopeReason: string | null }
+    outOfScopeReason: string | null,
+    pendingReason: string | null }
 ```
 
 Decision logic:
@@ -176,24 +183,89 @@ if matches.length > 0 && matches[0].score >= minMatchScore:
   return { status: 'exact', matchedChunkIds: matches.map(id),
            matchedHandle: matches[0].metadata.handle,
            matchedTitle: matches[0].document.title,
-           outOfScopeReason: null }
+           outOfScopeReason: null, pendingReason: null }
 
-if productQuery matches an entry in nfcs-out-of-scope.yaml
-  (case-insensitive substring or category-tag match):
+if productQuery matches an entry in nfcs-out-of-scope.yaml:
   return { status: 'unavailable', matchedChunkIds: [],
            matchedHandle: null, matchedTitle: null,
-           outOfScopeReason: <entry.reason> }
+           outOfScopeReason: <entry.reason>, pendingReason: null }
+
+if productQuery matches an entry in nfcs-pending.yaml:
+  return { status: 'pending', matchedChunkIds: [],
+           matchedHandle: null, matchedTitle: null,
+           outOfScopeReason: null,
+           pendingReason: <entry.reason> }
 
 return { status: 'orderable', matchedChunkIds: [],
          matchedHandle: null, matchedTitle: null,
-         outOfScopeReason: null }
+         outOfScopeReason: null, pendingReason: null }
 ```
 
-Ordering matters: `exact` beats `unavailable` beats `orderable`.
-If a product is both in the corpus AND on the out-of-scope list,
-the corpus wins — the corpus is a fact about what NFCS has done,
-the out-of-scope list is a policy about what they won't do; the
-former overrides the latter (a shipped product isn't hypothetical).
+Ordering matters: **`exact` beats `unavailable` beats `pending`
+beats `orderable`.**
+
+- `exact` beats `unavailable`: a shipped product isn't
+  hypothetical. If the corpus contains a chunk for a brand the
+  out-of-scope list also names, the corpus wins.
+- `unavailable` beats `pending`: a commercial won't-stock
+  decision applies to everything the brand sells, including
+  categories the shop plans to hold. LeMieux electric fencing
+  (if it existed) is still `unavailable`, not `pending` — the
+  brand is the blocker, not the category.
+- `pending` beats `orderable`: when the shop has committed to
+  hold a category and named the pre-condition, that's the
+  answer to give, not the generic "we can source that." The
+  customer copy is materially different.
+
+### Why `pending` is a distinct status (SME correction 2026-09-17)
+
+The original three-state model — exact / orderable / unavailable
+— did not have a home for the shape "we don't currently stock
+this, but we've committed to and are waiting on a specific
+pre-condition (regulatory / lease / onboarding)." The SME
+conversation surfaced that cases 003 (wormers) and 008 (electric
+fencing) are both this shape, not the "cannot supply" shape they
+were originally labelled with.
+
+**Two options considered:**
+
+**Option A — `pending` is a variant of `orderable`** with an
+optional `pendingContext` field carrying the pre-condition.
+Cleaner schema; both statuses share the tool's core decision
+("we won't refuse this customer"). Rejected because:
+
+1. Cases 003 and 008 have prohibited-claims lists that forbid
+   BOTH "we don't stock" AND "we can order." The correct
+   customer answer names the specific pre-condition ("we're
+   waiting on BETA accreditation to start selling wormers").
+   If `pending` folds under `orderable`, the metric
+   `stock_status_correct` scores 1.0 on those cases even when
+   the model produces the generic "we can source that"
+   answer — because the tool's status matches. That's a metric
+   that doesn't distinguish the two answers, which is exactly
+   the failure mode a distinguishing status is meant to prevent.
+2. Synthesis discipline would have to inspect an optional field
+   to know which of two customer-facing wordings to produce —
+   which is re-introducing the "model uses its own judgment on
+   what claim to make" problem the ADR is trying to prevent at
+   the tool layer. Having synthesis branch on a first-class
+   status is more legible than branching on optional-field
+   presence.
+
+**Option B — `pending` is a distinct status.** Chosen. Costs:
+
+- Fourth state inflates the customer-copy branch table by one.
+- Golden-case annotation and the `stock_status_correct` metric
+  each accept a four-value enum instead of three.
+
+Both are acceptable given the metric-distinguishability win.
+
+**One reason to preserve for later:** if the pending shape turns
+out to have many sub-variants (pending-with-eta,
+pending-without-eta, pending-membership, pending-lease,
+pending-onboarding), we would split it. As of 2026-09-17, two
+real-traffic instances share the same shape, so this ADR does
+not split. Sprint 4 candidate if the shape multiplies.
 
 **`matchedHandle` returns the top hit's handle, not a fuzzy
 "maybe you meant" set.** Substitute suggestions are GW-19's job
@@ -473,6 +545,153 @@ Similarly, `expected_product_query: str | None` lands on the
 same schema pass, driven by the same reasoning — the metric
 introduced in §4 (`product_query_extraction_accuracy`) reads a
 schema field. Both fields land together in the same PR.
+
+## SME correction — 2026-09-17
+
+The Story-4 kickoff draft of this ADR reasoned on the wrong
+axis for the negative side of stock. An SME conversation
+2026-09-17 corrected the model. The corrections are absorbed
+into §1 and §2 above; this section records what changed and
+why so future readers can see the arc.
+
+### What the SME said
+
+- **Won't-stock is commercial, not categorical.** The only
+  brands NFCS will not carry are **Ariat** and **LeMieux**,
+  and the reason is that Aivly stocks both locally. This is a
+  competitive-relationship decision, not a rule about
+  categories. A customer answer for these is genuinely useful
+  and specific — "we don't carry LeMieux; Aivly stocks it
+  locally" — not a refusal-shaped copy.
+- **Wormers are pending, not unavailable.** NFCS needs BETA
+  membership to sell veterinary wormers. Accreditation is
+  coming. The shop plans to stock wormers.
+- **Electric fencing is pending, not unavailable.** NFCS is
+  waiting on unit F1's lease (they have D1; F1 opens the
+  additional footprint that will hold fencing stock). Timeline:
+  ~12 days from 2026-09-17, so mid-Sprint 3.
+- **Case 042 (Simple Systems) is mis-classified.** Not on the
+  permanent won't-stock list. Whether it's pending or
+  orderable-per-request needs an SME follow-up. Until then,
+  Simple Systems falls through the corpus lookup → not on the
+  out-of-scope list → orderable, which is closer to correct
+  than the original "unavailable" label was.
+
+### Consequences of the correction
+
+1. **§1 rewritten** to describe two files, brand-based
+   `nfcs-out-of-scope.yaml` and category/brand-based
+   `nfcs-pending.yaml`.
+2. **§2 rewritten** to describe four states, with the argument
+   for `pending` as a distinct status (metric distinguishability
+   + synthesis legibility).
+3. **`data/nfcs-out-of-scope.yaml`** rewritten. Two entries,
+   Ariat and LeMieux, both with a `reason` naming Aivly. The
+   provisional flag comes off — this is SME-sourced.
+4. **`data/nfcs-pending.yaml`** new. Two entries, wormers
+   (pending BETA membership) and electric fencing (pending
+   unit-F1 lease). Both carry `pendingReason` prose the tool
+   returns.
+5. **Golden set cases 003, 008, 042 need re-annotation.**
+   Story 4 close-out flips 003 and 008 to
+   `expected_stock_status: pending`; 042 stays unlabelled
+   pending SME follow-up. This is a change to what the smoke
+   verifies (task #8 — already blocked on task #7's schema
+   field, so absorbed there).
+6. **The negative side of `three-state-stock` now has zero
+   confirmed real-traffic cases.** Everything originally
+   labelled "cannot supply" turned out to be "not-yet." This
+   is worth naming plainly: the golden dataset does not
+   currently contain a confirmed `unavailable` case. When one
+   surfaces (a customer asking about a LeMieux product, an
+   Ariat query), it becomes the first real-traffic anchor for
+   that shape. Sprint 4 follow-up: solicit an `unavailable`-
+   shape case from the SME to close this hole.
+
+### Ask: are other categories gated the same way as wormers?
+
+Wormers require BETA membership. That is a **licence /
+membership** gate. If NFCS has other categories under similar
+gates (SQP-status feed supplements, prescription-only wound
+care, licenced chemicals), those should be in
+`nfcs-pending.yaml` as a class. Recording as an open SME
+question — this ADR does not commit either way until it's
+asked. Absent a class, wormers is the single instance.
+
+## Prediction — case 008 electric fencing flips inside the capstone window
+
+Written down before it happens, per the "record predictions to
+verify" discipline.
+
+- **Trigger date (predicted):** NFCS takes possession of unit
+  F1 approximately 2026-09-29 (~12 days from this ADR). Electric
+  fencing stock ships to F1 shortly after; the shop's website /
+  product data catches up on the shop's own cadence.
+- **Cases expected to change shape:**
+  - **case 008 (electric fencing)** — `pending` → `exact` once
+    fencing chunks land in the corpus. `prohibited_claims` list
+    needs updating (the shop's stance on electric fencing
+    changes; "we stock electric fencing" is no longer
+    prohibited).
+  - **any other electric-fencing-shaped customer queries the
+    shop receives in the next 12 days** — the golden set has
+    only one such case today, but real-traffic ingestion may
+    surface more between now and F1 opening.
+- **Expected metric behaviour:**
+  - Baseline (this sprint, pre-F1): case 008 scores
+    `stock_status_correct = 1.0` under the corrected label
+    (`pending`).
+  - Post-F1 without re-ingest: case 008 scores 0.0 — the shop
+    now stocks it, but the corpus doesn't reflect that; the
+    tool returns `pending` when the corrected expected shape
+    is `exact`.
+  - Post-F1 with re-ingest + relabel: case 008 scores 1.0
+    again under the new expected shape `exact`. The pending
+    entry for electric fencing is removed from
+    `nfcs-pending.yaml` as part of the same change.
+- **Verification plan:**
+  1. On or shortly after F1 opens, re-run Shopify ingestion
+     against the updated product catalogue.
+  2. Update case 008's `expected_stock_status` from `pending`
+     to `exact`; update `prohibited_claims` to reflect the new
+     stance.
+  3. Remove the electric-fencing entry from
+     `nfcs-pending.yaml`.
+  4. Re-run the harness; confirm case 008 flips from correctly-
+     pending to correctly-exact.
+  5. Record the drift measurement as a sprint-log entry — the
+     third confirmed instance of the corpus-staleness pattern
+     documented since Sprint 1 (following the Thunderbrook and
+     Devon-haylage discoveries).
+- **Fallback (if the timing doesn't cooperate):** freeze the
+  corpus at 2026-09-17 for the capstone measurement. Story 4
+  close-out notes case 008 was measured against the pre-F1
+  stance. Cost: lose the drift-measurement opportunity.
+  Benefit: measurable determinism through the capstone window.
+- **Which we're taking:** default plan is post-F1 re-ingest.
+  Fallback engaged if either (a) F1 opens later than
+  2026-10-05, or (b) the capstone deadline forces the freeze
+  earlier. Decision-maker: Vix Hawley. Recorded here so the
+  choice doesn't drift silently.
+
+### Story 1 payoff — deterministic chunk IDs make the re-ingest cheap
+
+ADR-0013 (deterministic chunk IDs, Sprint 3 Story 1) is what
+turns "re-ingest after F1 opens" from a risky operation into a
+routine one. Under the old design, re-ingesting the same
+product corpus would produce fresh UUIDs on every chunk — the
+reconciler would then have to figure out which old chunk maps
+to which new one, and any stale citation would break. Under
+ADR-0013's hash-cast UUIDs, a re-ingest is idempotent: the
+same chunk content produces the same ID, upserts by primary
+key, and any existing trace/citation reference keeps working.
+
+The F1 prediction is the first real end-to-end payoff of
+Story 1. Worth recording because Story-1 was closed with a
+"reconciler / preflight is still defence-in-depth" note and
+this is one of the two upcoming events that would actually
+exercise the deterministic-ID path (the other being a shop-side
+product-title change).
 
 ## References
 
