@@ -61,6 +61,22 @@ export interface RouterDecision {
   readonly adversarialSuspected: boolean;
   /** Name of the safety-signal rule that matched, when applicable. */
   readonly adversarialPattern?: string;
+  /**
+   * ADR-0010 amendment 3 (2026-09-17, Sprint 3) — reverses the original
+   * "Entity extraction" non-goal. Feeds ADR-0014's Tier 1 route-based
+   * dispatch: intent === 'product' && productQuery !== undefined fires
+   * a deterministic tool call (per ADR-0016). Absent when the query is
+   * compound, ambiguous, or non-product; also absent for non-product
+   * intents (the field has no meaning there).
+   *
+   * The rule pass extracts common shapes ("do you sell X", "how much
+   * is X", "do you stock X"); the LLM pass covers the residual. Both
+   * populate this field. See ADR-0016 §4 for the tool-side semantics
+   * and the separate `product_query_extraction_accuracy` metric that
+   * measures this field's correctness (it does not ride on
+   * `intent_classification_accuracy`).
+   */
+  readonly productQuery?: string;
 }
 
 export interface Router {

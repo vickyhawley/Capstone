@@ -113,3 +113,92 @@ export function matchIntentRule(query: string): IntentMatch | null {
   }
   return null;
 }
+
+// ---------- Product-query extraction (ADR-0016 §4) ----------
+//
+// Regex-based extraction for the common phrasings named in ADR-0016:
+// "do you sell X", "do you stock X", "how much is X". Defence-in-
+// depth alongside the LLM classifier's own extraction; either can
+// populate RouterDecision.productQuery.
+//
+// Not exhaustive by design. Compound queries, referential pronouns,
+// and paraphrased phrasings fall through to the LLM. The regex
+// exists to guarantee a productQuery on the common shape when the
+// LLM misses (e.g. on transient API failure the classifier defaults
+// to out-of-scope + null productQuery; the regex still catches the
+// obvious "do you sell X" case).
+//
+// Case preservation matters — brand names ("CSJ", "Thunderbrook",
+// "Haygates") are proper nouns and are meaningful to the retriever
+// as capitalised strings. Extraction preserves case.
+//
+// The tail-stripping list drops "please/thanks/pls/still/in stock"
+// noise that would otherwise degrade retrieval by adding non-product
+// tokens to the match query.
+
+const PRODUCT_EXTRACT_PATTERNS: readonly RegExp[] = [
+  // "do you sell / stock / stocking / have / carry X"
+  // Also "are you (currently) stocking X" — accepted via optional "are".
+  /\b(?:do|are)\s+you\s+(?:currently\s+|going\s+to\s+|only\s+)?(?:sell|stock|stocking|have|carry|carrying|got)\s+(?:any\s+|the\s+)?(.+?)(?=\s*[?.,!]|\s+(?:in\s+stock|still|please|pls|thanks?|thx|by\s+any\s+chance|at\s+all)\b|$)/i,
+  // "how much is / are X" / "how much (is|are) the/your X"
+  /\bhow\s+much\s+(?:is|are|does)\s+(?:your\s+|the\s+|a\s+bag\s+of\s+)?(.+?)(?=\s*[?.,!]|\s+(?:cost|per\s+|still|please|pls|thanks?|thx)\b|$)/i,
+  // "what is your cost of X" / "cost per bale of X"
+  /\b(?:cost|price)\s+(?:per\s+\w+\s+)?of\s+(.+?)(?=\s*[?.,!]|\s+(?:please|pls|thanks?|thx)\b|$)/i,
+];
+
+// Tokens that on their own carry no product-signal — pronouns,
+// context-referential words, quantifiers, and empty-set nouns.
+// An extraction composed *entirely* of these is referential ("of
+// those", "any of them", "some more") rather than a product-string.
+const REFERENTIAL_TOKENS = new Set([
+  'it',
+  'that',
+  'them',
+  'one',
+  'ones',
+  'this',
+  'these',
+  'those',
+  'stock',
+  'anything',
+  'something',
+  'of',
+  'the',
+  'a',
+  'an',
+  'any',
+  'some',
+  'more',
+  'other',
+  'another',
+  'all',
+  'each',
+]);
+
+function isContextReferential(str: string): boolean {
+  const tokens = str
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+  if (tokens.length === 0) return true;
+  return tokens.every((t) => REFERENTIAL_TOKENS.has(t));
+}
+
+/**
+ * Attempt regex extraction of the product-string from a customer
+ * query. Returns the extracted string trimmed and with trailing
+ * courtesies stripped, or null when no pattern matched or the
+ * extracted string is entirely composed of context-referential
+ * tokens ("of those", "any of them") that carry no product-signal.
+ */
+export function extractProductQuery(query: string): string | null {
+  for (const pattern of PRODUCT_EXTRACT_PATTERNS) {
+    const match = pattern.exec(query);
+    if (!match || !match[1]) continue;
+    const raw = match[1].trim();
+    if (raw.length < 3) continue;
+    if (isContextReferential(raw)) continue;
+    return raw;
+  }
+  return null;
+}

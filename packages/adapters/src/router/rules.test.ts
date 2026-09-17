@@ -15,7 +15,13 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { INTENT_RULES, SAFETY_RULES, matchIntentRule, matchSafetyRule } from './rules.js';
+import {
+  INTENT_RULES,
+  SAFETY_RULES,
+  extractProductQuery,
+  matchIntentRule,
+  matchSafetyRule,
+} from './rules.js';
 
 describe('router rules layer', () => {
   it('has unique names across both rule kinds', () => {
@@ -126,6 +132,75 @@ describe('router rules layer', () => {
     it('returns null on a welfare-clinical query', () => {
       expect(matchIntentRule('my horse has dropped weight, what would you recommend')).toBeNull();
       expect(matchSafetyRule('my horse has dropped weight, what would you recommend')).toBeNull();
+    });
+  });
+
+  describe('extractProductQuery — regex extraction for common shapes (ADR-0016 §4)', () => {
+    // Test phrasings invented for the test, not copied from the
+    // golden set. Mirrors the same eval-hygiene rule the intent
+    // rules follow.
+    it('extracts from "do you sell X"', () => {
+      expect(extractProductQuery('do you sell haynets in dark green')).toBe(
+        'haynets in dark green',
+      );
+    });
+
+    it('extracts from "do you stock X"', () => {
+      expect(extractProductQuery('do you stock hoof oil')).toBe('hoof oil');
+    });
+
+    it('extracts from "do you have X in stock" — strips trailing "in stock"', () => {
+      expect(extractProductQuery('do you have wintec saddles in stock?')).toBe('wintec saddles');
+    });
+
+    it('preserves case for proper nouns', () => {
+      expect(extractProductQuery('do you sell Barrier hoof supplement')).toBe(
+        'Barrier hoof supplement',
+      );
+    });
+
+    it('strips trailing courtesies (please / thanks / pls)', () => {
+      expect(extractProductQuery('do you sell rubber matting please')).toBe('rubber matting');
+      expect(extractProductQuery('do you sell rubber matting thanks')).toBe('rubber matting');
+      expect(extractProductQuery('do you sell rubber matting pls')).toBe('rubber matting');
+    });
+
+    it('handles "are you currently stocking X"', () => {
+      expect(extractProductQuery('are you currently stocking rock salt licks')).toBe(
+        'rock salt licks',
+      );
+    });
+
+    it('extracts from "how much is X"', () => {
+      expect(extractProductQuery('how much is a bale of shavings')).toBe('a bale of shavings');
+    });
+
+    it('extracts from "how much are the X"', () => {
+      expect(extractProductQuery('how much are the rubber grooming brushes?')).toBe(
+        'rubber grooming brushes',
+      );
+    });
+
+    it('returns null on referential phrasings', () => {
+      expect(extractProductQuery('do you have any of those')).toBeNull();
+      expect(extractProductQuery('do you sell it')).toBeNull();
+    });
+
+    it('returns null on too-short extractions', () => {
+      // "do you stock X" with a two-char body would extract "" or a
+      // one-word body under 3 chars — filter it.
+      expect(extractProductQuery('do you stock oz')).toBeNull();
+    });
+
+    it('returns null when no pattern matches', () => {
+      expect(extractProductQuery('my horse dropped weight')).toBeNull();
+      expect(extractProductQuery('what time do you open')).toBeNull();
+    });
+
+    it('returns null on a bare "stock" reference (context-referential)', () => {
+      // "do you stock stock" would extract "stock" as the body.
+      // GENERIC_TOKENS filters this out — it's not a product-string.
+      expect(extractProductQuery('do you stock stock')).toBeNull();
     });
   });
 });

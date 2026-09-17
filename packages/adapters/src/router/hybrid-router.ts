@@ -19,7 +19,7 @@ import type { Router, RouterDecision, RouterQuery } from '@groundwork/core';
 import type OpenAI from 'openai';
 
 import { classifyWithLLM } from './llm-classifier.js';
-import { matchIntentRule, matchSafetyRule } from './rules.js';
+import { extractProductQuery, matchIntentRule, matchSafetyRule } from './rules.js';
 
 export class HybridRouter implements Router {
   constructor(private readonly openai: OpenAI) {}
@@ -29,17 +29,35 @@ export class HybridRouter implements Router {
     const adversarialSuspected = safety !== null;
 
     const intentRule = matchIntentRule(query.text);
-    const base = intentRule
-      ? {
-          intent: intentRule.rule.intent,
-          confidence: 1.0,
-          rationale: `matched pattern: ${intentRule.rule.name}`,
-          matched: 'rule' as const,
-        }
-      : {
-          ...(await classifyWithLLM(this.openai, query.text)),
-          matched: 'llm' as const,
-        };
+    let base: Omit<RouterDecision, 'adversarialSuspected' | 'adversarialPattern'>;
+
+    if (intentRule) {
+      // Intent-shortcut rules today only cover service-referral +
+      // logistics:order-status. Neither is a product intent, so
+      // productQuery is not populated on this branch.
+      base = {
+        intent: intentRule.rule.intent,
+        confidence: 1.0,
+        rationale: `matched pattern: ${intentRule.rule.name}`,
+        matched: 'rule',
+      };
+    } else {
+      const llm = await classifyWithLLM(this.openai, query.text);
+      // Defence-in-depth: on product-intent, if the LLM didn't extract
+      // (transient error path returns null, or the LLM missed a common
+      // shape), the regex extractor gets a second attempt. ADR-0016 §4.
+      const productQuery =
+        llm.intent === 'product'
+          ? (llm.productQuery ?? extractProductQuery(query.text) ?? undefined)
+          : undefined;
+      base = {
+        intent: llm.intent,
+        confidence: llm.confidence,
+        rationale: llm.rationale,
+        matched: 'llm',
+        ...(productQuery !== undefined ? { productQuery } : {}),
+      };
+    }
 
     return safety
       ? { ...base, adversarialSuspected, adversarialPattern: safety.rule.name }

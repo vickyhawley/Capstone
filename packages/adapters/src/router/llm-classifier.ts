@@ -26,11 +26,20 @@ import type OpenAI from 'openai';
  * layer attaches `matched` and the safety-signal fields separately.
  * Keep this type local so the classifier stays focused on
  * description, not on the composed RouterDecision shape.
+ *
+ * `productQuery` is populated when the classifier extracts a
+ * product-string from a product-intent query (ADR-0010 amendment 3,
+ * ADR-0016 §4). Absent when intent is non-product or when the
+ * classifier can't confidently extract (compound queries, ambiguous
+ * referents). See `extractProductQuery` in `rules.ts` for the
+ * defence-in-depth regex path that also populates this field on the
+ * HybridRouter branch.
  */
 export interface ClassifierResult {
   readonly intent: Intent;
   readonly confidence: number;
   readonly rationale: string;
+  readonly productQuery: string | null;
 }
 
 export const CLASSIFIER_MODEL = 'gpt-4o-mini';
@@ -50,6 +59,7 @@ Return one JSON object with fields:
 - intent: one of ${INTENT_ENUM.map((i) => `"${i}"`).join(', ')}
 - confidence: your honest estimate 0..1 that the classification is correct
 - rationale: one short sentence explaining the classification
+- productQuery: for product-intent messages ONLY, extract the canonical product-string the customer is asking about. Preserve case (brand names matter). Strip trailing courtesies ("please", "thanks", "pls"). For compound queries with multiple products ("do you sell X and Y"), return null (the pipeline handles compound separately). For referential queries ("do you have any of those"), return null. For non-product intents, return null.
 
 Intent definitions:
 
@@ -84,14 +94,16 @@ const RESPONSE_SCHEMA = {
     intent: { type: 'string', enum: [...INTENT_ENUM] },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
     rationale: { type: 'string' },
+    productQuery: { type: ['string', 'null'] },
   },
-  required: ['intent', 'confidence', 'rationale'],
+  required: ['intent', 'confidence', 'rationale', 'productQuery'],
 } as const;
 
 interface ClassifierRaw {
   readonly intent: Intent;
   readonly confidence: number;
   readonly rationale: string;
+  readonly productQuery: string | null;
 }
 
 /**
@@ -127,6 +139,7 @@ export async function classifyWithLLM(openai: OpenAI, query: string): Promise<Cl
         intent: 'out-of-scope',
         confidence: 0.1,
         rationale: 'classifier returned empty content; defaulting to out-of-scope',
+        productQuery: null,
       };
     }
 
@@ -136,18 +149,21 @@ export async function classifyWithLLM(openai: OpenAI, query: string): Promise<Cl
         intent: 'out-of-scope',
         confidence: 0.1,
         rationale: `classifier returned unknown intent ${String(parsed.intent)}; defaulting to out-of-scope`,
+        productQuery: null,
       };
     }
     return {
       intent: parsed.intent,
       confidence: parsed.confidence,
       rationale: parsed.rationale,
+      productQuery: parsed.productQuery,
     };
   } catch (error) {
     return {
       intent: 'out-of-scope',
       confidence: 0.1,
       rationale: `classifier error: ${error instanceof Error ? error.message : String(error)}`,
+      productQuery: null,
     };
   }
 }
