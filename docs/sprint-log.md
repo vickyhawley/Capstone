@@ -2509,3 +2509,70 @@ count(*) from traces" check to confirm rows are landing.
   not exists` slip is caught before the smoke.
 - Enable RLS on `chunks` + `documents` (finding 2). Migration
   005, non-destructive.
+
+### Story 4 kick-off — ADR-0016 drafted (2026-09-17)
+
+Orientation for Story 4 (GW-20 stock lookup) surfaced two
+things the Sprint 3 plan didn't fully spec, both loaded enough
+to warrant an ADR before code — same discipline as Story 1
+(ADR-0013) and Story 3 (ADR-0015):
+
+1. **Catalogue data source.** Migration 001's `products` table
+   is empty and has no writer. Product data lives in
+   `chunks.metadata` for `content_type='product'` chunks.
+   Rebuilding the ingestion path to populate `products` would
+   delay Story 4 for a design the corpus already covers.
+   ADR-0016 §1 commits to chunks-as-catalogue and names
+   `products`-table cleanup as a Sprint 4 candidate.
+
+2. **Three-state semantics are not quantity-based.** The
+   golden `three-state-stock` tag maps to shop-behaviour
+   shapes: `exact` (held in-store), `orderable` (within
+   sourcing scope, shop offers to get it in), `unavailable`
+   (out of scope, cannot supply). Distinguishing `orderable`
+   from `unavailable` requires a canonical "what NFCS won't
+   source" list — the `wormers` / `electric fencing` / `Simple
+   Systems` shape from cases 003, 008, 042. ADR-0016 §2 makes
+   this explicit and adds `data/nfcs-out-of-scope.yaml` as the
+   curation-driven source of truth. Seed entries derive from
+   the golden set; additions are curation, not code.
+
+**ADR-0016 also decides:**
+
+- Router adds an optional `productQuery` field for Tier 1
+  entity extraction (ADR-0014 §Tier 1).
+- Tool result shape: `{ status, matchedChunkIds, matchedHandle,
+  matchedTitle, outOfScopeReason }`. Chunk IDs give citations
+  for free; substitutes are GW-19's job, not this tool's.
+- `minMatchScore` threshold is descriptive-first (measure
+  baseline in the close-out), named-floor at close-out — same
+  discipline as ADR-0010 / ADR-0014's `tool_backed_claim`.
+- Mandatory close-out smoke against real Supabase, mirroring
+  ADR-0015's smoke discipline — verify every three-state shape
+  against golden-case-derived queries, log the score
+  distribution for threshold sizing.
+
+**Golden-set sub-task named in the ADR:** cases 001–020 encode
+their expected three-state shape in provenance comments only,
+not in a machine-readable field. Story 4 close-out either adds
+an `expected_stock_status` field to the case schema, or uses a
+one-shot parse of the provenance (fragile). First option
+preferred — same shape as GW-17's shape tags.
+
+**Sprint 4 candidates added by this ADR:**
+
+- `products` table cleanup — either populate via ingestion or
+  drop from schema.
+- Lead-time capture for `orderable` — currently opaque to the
+  customer.
+- `price_lookup` tool if synthesis discipline for reading
+  prices from chunks proves loose.
+
+**Producer-ahead-of-consumer status:** GW-20's outputs feed (a)
+synthesis (not yet implemented) and (b) GW-19 substitute
+ranking (not yet implemented). The mandatory smoke proves the
+tool's write path independently, matching GW-25's Story 3
+pattern.
+
+Next: implement per the ADR — router change, tool adapter,
+YAML data file, wire into the loop, unit tests, smoke.
