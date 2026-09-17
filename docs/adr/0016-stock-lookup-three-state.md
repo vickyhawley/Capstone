@@ -28,8 +28,33 @@
 Sprint 3 Story 4 (GW-20) is the load-bearing product-intent
 tool. ADR-0014 named it as the first Tier-1 candidate: a query
 routed with `intent: product` + an extracted product handle
-becomes a deterministic tool call whose result is the answer's
-substrate.
+dispatches a tool call whose result is the answer's substrate
+for stock claims.
+
+## Framing note — this tool is not deterministic
+
+The Sprint 3 plan row for Story 4 calls this tool "Deterministic
+(against catalogue)" and ADR-0014's Tier 1 section uses the same
+word. Both frames overclaim. The tool's decision logic (§2) is
+hybrid retrieval with a similarity threshold — the same
+probabilistic substrate as the retriever, because chunks-as-
+catalogue means the catalogue lookup IS the retrieval query.
+Lookup by handle against a structured `products` table would be
+deterministic; nearest-neighbour over prose isn't.
+
+The load-bearing claim this ADR actually makes is not
+"deterministic" but **"stock status is sourced from the
+catalogue rather than from model knowledge."** That's true, it's
+what the README's non-negotiable rule requires, and it's what
+distinguishes GW-20 from a model-invented answer. Nothing
+downstream should describe this tool as deterministic; when
+that word appears in Sprint-log rows or older ADR text
+referencing GW-20, it should be read as shorthand for the
+above.
+
+The sprint-log Story 4 row and ADR-0014 §Tier 1 both retain the
+word for now (editing them mid-sprint is more churn than
+clarity). Story 4 close-out amends both.
 
 Two things about "the catalogue" turned out to matter more than
 the plan assumed:
@@ -73,7 +98,7 @@ the plan assumed:
 
 **Seven decisions.**
 
-### 1. Data source: chunks table + hand-curated out-of-scope list
+### 1. Data source: chunks table + SME-curated out-of-scope list
 
 The tool reads:
 
@@ -84,10 +109,39 @@ The tool reads:
   new query path.
 - `data/nfcs-out-of-scope.yaml` — a small SME-curated file
   listing categories and brands NFCS confirms they will not
-  source. Seed entries derived from the golden set: `wormers`,
-  `electric fencing`, `Simple Systems`, plus category signals
-  for veterinary-prescription and human/veterinary medicine.
-  Additions are curation, not code.
+  source.
+
+**The seed is provisional and must not close the loop against
+the golden set alone.** Deriving the initial entries from cases
+003 (wormers), 008 (electric fencing), 042 (Simple Systems)
+makes the seed circular — `stock_status_correct` would hit 1.00
+on those cases by construction because the list matches itself.
+Any threshold measured against that shape is meaningless: it's
+"the list correctly recognises entries in the list," not "the
+list correctly captures NFCS's sourcing scope."
+
+The un-hack:
+
+- Ship the provisional seed (cases 003, 008, 042) marked
+  `provisional: test-derived` in the YAML so future readers
+  don't mistake it for validated data.
+- **Before Story 4 close-out**, a five-minute conversation with
+  NFCS gets the actual won't-source categories from the shop
+  owner. This turns the metric from circular into real.
+- The SME-derived entries land in the same YAML with the
+  provisional flag removed. Golden-set-derived entries retain
+  the flag until a golden-case coincidentally happens to test
+  one of the SME categories.
+- Story 4 close-out records which entries were provisional vs
+  SME-sourced and whether the SME conversation happened. If it
+  did not happen, the metric's floor is annotated as
+  "circular — SME conversation still owed" and re-measured
+  once the seed is real.
+
+Additions to the list after Sprint 3 are curation, not code.
+The point of the YAML is that a business-fact change doesn't
+require a code change — the shop owner adds a line, ingestion
+picks it up on next boot.
 
 The `products` table stays in schema for Sprint 3 (removing it
 requires a migration that touches Sprint 1 code, out of scope
@@ -146,19 +200,49 @@ former overrides the latter (a shipped product isn't hypothetical).
 (ADR-0005). This tool is single-answer per call; the loop can
 call it again with a different query if the planner disagrees.
 
-### 3. `minMatchScore`: descriptive first, then floor
+### 3. `minMatchScore`: safe provisional default, characterised at close-out
 
-Same discipline as ADR-0010 (intent classification) and
-ADR-0014 (`tool_backed_claim`): baseline first, threshold
-second. Sprint 3 close-out for Story 4 measures the score
-distribution for every product-intent golden case, then names
-the floor at whichever value distinguishes real matches from
-noise on the corpus we have.
+Same "descriptive-first, threshold-second" discipline as
+ADR-0010 (intent classification) and ADR-0014 (`tool_backed_claim`):
+Sprint 3 close-out for Story 4 measures the score distribution
+for every product-intent golden case and names the floor at
+whichever value distinguishes real matches from noise on the
+corpus we have.
 
-The default in code is `null` (accept any match) so the smoke
-test can characterise the distribution before the floor lands.
-Once the floor is set, it becomes the schema's default via a
-constant, not a config flag.
+**But an accept-any-match default is unsafe in the direction §4
+says can't happen.** A wrong extraction ("wormers", "electric
+fencing") will retrieve *something* — the nearest feed or fencing-
+adjacent chunk — and if any match wins, that becomes `exact` and
+the tool falsely claims the shop stocks a product they don't.
+That's exactly the false-availability failure the negative three-
+state cases (003, 008, 042) exist to catch, and a `null` default
+manufactures the failure by construction.
+
+The default is therefore:
+
+- **Provisional floor: `0.5`** on the hybrid retriever's RRF-
+  normalised score. Sized conservatively so that borderline
+  retrievals fall through to `orderable` (safe) rather than
+  becoming `exact` (unsafe). Not a measured number yet — this is
+  a defensive floor before we have distribution data, not the
+  final threshold.
+- **Once close-out has the distribution**, the provisional 0.5
+  is either confirmed, tightened, or (if the data justifies)
+  loosened. The measured value replaces the provisional constant
+  and lands in a code constant + `evals/thresholds/sprint-3.json`.
+
+**`null` is characterisation-only.** The smoke script may pass
+`minMatchScore: null` to record the score for every query
+regardless of match, but no path that reaches a customer ever
+uses `null`. Enforced by having the default be a constant, not
+an optional; the smoke is the only caller that overrides it.
+
+The provisional 0.5 is deliberately conservative on the safety
+axis: false-`orderable` (system says "we can try to source"
+when we actually stock it) is a customer-inconvenience failure;
+false-`exact` (system says "in stock" when we don't stock it) is
+a promise-breaking failure. Sprint 3 tolerates the first while
+sizing the threshold to eliminate the second.
 
 ### 4. Entity extraction is a router-side change
 
@@ -172,20 +256,51 @@ Set when the router (rule OR LLM) can extract a product-string
 from the query with reasonable confidence. Absent when the
 query is compound, ambiguous, or non-product. Tier 1 dispatch
 (from ADR-0014) checks `intent === 'product' &&
-productQuery !== undefined` — only that combination fires the
-deterministic tool call. Tier 2 (missing productQuery on a
+productQuery !== undefined` — only that combination fires a
+Tier 1 tool call. Tier 2 (missing productQuery on a
 product-intent query) falls to the planner-loop path.
 
 Rule-based extraction covers the common shape ("do you sell
 X", "how much is X", "do you stock X" — extract the X). LLM
 extraction picks up the residual. Both feed the same field.
 
-**Not load-bearing on confidence.** The extraction being wrong
-degrades gracefully: a wrong handle produces no match → falls
-through to `unavailable` (if out-of-scope) or `orderable`
-(otherwise). The customer copy for `orderable` — "let us try
-to source that for you" — is safe under a wrong extraction; a
-false-negative "in stock" claim is not possible from this path.
+**Reversal of ADR-0010's stated non-goal.** ADR-0010 originally
+listed "Entity extraction" as a non-goal for the router. This
+ADR reverses that decision. The reversal is recorded as
+Amendment 3 in ADR-0010 itself with its full reasoning, so the
+two ADRs don't contradict each other silently. Short version:
+Tier 1 dispatch needs a canonical product-string extracted from
+the raw query; nothing else in the pipeline has both the query
+surface and the intent context to do that; the router is the
+natural home. ADR-0004's attribute-schema extraction at ingest
+time continues to exist — it's a distinct task.
+
+**Extraction accuracy needs its own metric.** It cannot ride on
+`intent_classification_accuracy` — that measures which of six
+labels the router picked, not whether it correctly pulled
+"Molichaff Hoofkind" out of "do you sell molichaff hoofkind".
+This ADR adds **`product_query_extraction_accuracy`** as a new
+descriptive metric alongside the existing router metrics.
+Applicable iff the golden case has `intent === 'product'` and
+carries an expected product-string annotation (a new optional
+`expected_product_query` field on the case schema, added
+alongside `expected_stock_status` per §7 below). Descriptive-
+first, named-floor at Story 4 close-out — same discipline as
+ADR-0014's `tool_backed_claim`. Lands in
+`evals/thresholds/sprint-3.json` alongside `stock_status_correct`.
+
+**Not load-bearing on confidence for the stock tool's safety
+properties.** A wrong extraction degrades gracefully into the
+tool's three-state logic: a wrong handle produces no match →
+falls through to `unavailable` (if the wrong string happens to
+match the out-of-scope list) or `orderable` (otherwise). The
+customer copy for `orderable` — "let us try to source that for
+you" — is safe under a wrong extraction; a false-positive "in
+stock" claim is not producible from a wrong extraction, because
+the exact branch requires a match against `minMatchScore` (§3)
+and a wrong query won't reach that threshold except by adjacent-
+match accident — see §3 for how the threshold defends against
+that.
 
 ### 5. Structured tool errors, not exceptions
 
@@ -325,21 +440,39 @@ target is `= 1.00` on the golden set — same shape as
 Not applicable to non-product cases, non-stock product cases
 (price-only), or cases without an explicit shape annotation.
 
-### Golden-set follow-up
+### Golden-set schema field — blocker, done before the smoke
 
-Cases 001–020 (Sprint 1 batch, pre-GW-17b) have their expected
-three-state shape encoded in provenance comments, not in a
-machine-readable field. Sprint 3 close-out for Story 4 either:
+Cases 001–049 encode their expected three-state shape in
+provenance comments, not in a machine-readable field. The
+mandatory smoke (§7) reads the case shape to verify the tool's
+output matches the SME expectation. If the smoke reads
+provenance-comment text and the later `stock_status_correct`
+metric reads a schema field, the two measure different things
+and can silently drift.
 
-- Extracts the shape into a new optional field on the case
-  schema (`expected_stock_status: 'exact'|'orderable'|'unavailable' | null`),
-  same shape as GW-17's shape tags, OR
-- Uses a parsing convention on the provenance comment
-  (fragile — one-shot for Story 4 close-out only, not durable).
+**So the schema field lands first, before the smoke.**
 
-The first option is preferred and lines up with GW-17's approach
-to shape tags. Naming this as a Sprint 3 sub-task, not a Sprint
-4 defer — the metric can't run without it.
+- New optional field on the case schema:
+  `expected_stock_status: Literal['exact', 'orderable',
+  'unavailable'] | None`. Applicable to product-intent cases
+  where the shop's behaviour has a definite shape; absent for
+  cases where the question isn't about stock availability
+  (price-only, brand-carry compound queries).
+- Same shape as GW-17's shape tags — mirrors an existing
+  pattern rather than inventing a new one.
+- Cases 001–049 backfilled by reading each case's provenance
+  comment and assigning the shape it describes. Ambiguous cases
+  (001 Molichaff Hoofkind — provenance doesn't commit to
+  exact-vs-orderable) get left as `None` and are captured as an
+  SME follow-up.
+- **This is a Story 4 sub-task, not a Sprint 4 defer.** The
+  smoke depends on it; the metric depends on it. Both run this
+  sprint.
+
+Similarly, `expected_product_query: str | None` lands on the
+same schema pass, driven by the same reasoning — the metric
+introduced in §4 (`product_query_extraction_accuracy`) reads a
+schema field. Both fields land together in the same PR.
 
 ## References
 

@@ -2576,3 +2576,74 @@ pattern.
 
 Next: implement per the ADR — router change, tool adapter,
 YAML data file, wire into the loop, unit tests, smoke.
+
+**Corrections applied to ADR-0016 in review (2026-09-17):**
+
+Five sharp corrections from the plan-review pass; ADR updated
+in place and worth naming here so the deltas are visible in
+sprint-log without having to diff the ADR.
+
+1. **"Deterministic" is a false frame.** The tool's decision
+   logic is hybrid retrieval with a similarity threshold — the
+   same probabilistic substrate as the retriever. Chunks-as-
+   catalogue means the catalogue lookup IS retrieval. The
+   load-bearing claim is "stock status is sourced from the
+   catalogue, not from model knowledge" — true, load-bearing,
+   distinct from "deterministic." Added a §Framing note; the
+   sprint-log Story 4 row and ADR-0014 §Tier 1 still use the
+   word for now and will be amended at Story 4 close-out.
+
+2. **`minMatchScore` default of `null` was unsafe.** Accept-any-
+   match means every query with any retrieval hit becomes
+   `exact` — wormers matching an adjacent feed chunk → false
+   in-stock claim, exactly the failure mode the negative three-
+   state cases exist to catch. Fixed: provisional floor of `0.5`
+   as the code default (conservative, false-orderable safer
+   than false-exact), `null` reserved for the characterisation
+   smoke only, never reaches customers.
+
+3. **Out-of-scope seed derived from the golden set is circular.**
+   Seeding from cases 003/008/042 makes `stock_status_correct`
+   hit 1.00 by construction. Added: seed entries carry a
+   `provisional: test-derived` flag; a Story-4 sub-task (task
+   #11) is a five-minute SME conversation to get NFCS's actual
+   won't-source categories; provisional entries lose the flag
+   only when they're either SME-confirmed or coincidentally
+   overlap with an SME category. Close-out records whether the
+   SME conversation happened; if not, the metric's floor is
+   annotated as circular and re-measured once seeded properly.
+
+4. **ADR-0010 non-goal reversal must be recorded in ADR-0010.**
+   ADR-0010 explicitly named "Entity extraction" as a non-goal;
+   ADR-0016 §4 reverses that. Added Amendment 3 to ADR-0010
+   itself so the two ADRs don't contradict silently. Also:
+   extraction accuracy needs its own metric —
+   `product_query_extraction_accuracy` — added as a separate
+   descriptive metric in both ADRs. Task #12 lands it in the
+   harness.
+
+5. **Golden-set schema field is a blocker, not close-out sub-
+   task.** Original ADR framed the `expected_stock_status`
+   field as something the close-out would add. But the smoke
+   reads case shapes to verify the tool; if smoke reads
+   provenance-comment text and the metric later reads a schema
+   field, they measure different things and drift. Corrected:
+   the schema field lands FIRST, before the smoke. Also adds
+   `expected_product_query` in the same pass for metric #12.
+   Task #7 renamed with `(BLOCKS smoke)` suffix; task #8 (smoke)
+   now depends on task #7.
+
+**Task list updated:**
+
+- Task #3 (yaml) revised to reflect provisional-seed shape.
+- Task #7 (schema field) elevated to blocker; task #8 (smoke)
+  addBlockedBy task #7.
+- Task #11 added: SME conversation for real won't-source
+  categories.
+- Task #12 added: `product_query_extraction_accuracy` metric.
+
+Total Story 4 tasks now: 12. Sequencing: 1→2 (router changes),
+3 (yaml seed), 4→5 (tool + tests), 6 (compose), 7 (schema field
+— blocks smoke), 11 (SME conversation — can run in parallel
+with 4-7), 12 (extraction metric — can run alongside 7), 8→9
+(smoke + baseline), 10 (close-out).

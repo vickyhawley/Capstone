@@ -501,3 +501,60 @@ in Sprint 2 because GW-11 can be designed statelessly against
 the current shape (intent + adversarialSuspected are two
 categorical signals, and the gate's policy is a two-argument
 function); the calibration question is orthogonal.
+
+## Sprint 3 amendments
+
+### Amendment 3 — RouterDecision gains `productQuery` (entity extraction reversed)
+
+**Reverses:** the "Entity extraction" non-goal in §Non-goals.
+Recorded here rather than only in ADR-0016 so the two ADRs don't
+contradict each other silently.
+
+**Trigger:** ADR-0014's Tier 1 route-based tool dispatch. The
+strongest structural enforcement of the "deterministic facts
+come from tools" rule requires that a query like *"do you sell
+X"* dispatches a stock-lookup tool call with a concrete argument
+extracted from the query. Nothing else in the pipeline has both
+the query surface and the intent context to do that extraction —
+retrieval consumes an already-extracted query, and the tool loop
+receives the router's decision as input. So the extraction lands
+on the router.
+
+**Change:** `RouterDecision` gains an optional field
+`productQuery?: string`. Set when either the rule pass or the
+LLM pass produces a product-string with reasonable confidence.
+Absent when the query is compound, ambiguous, or non-product.
+ADR-0014's Tier 1 dispatch matches on `intent === 'product' &&
+productQuery !== undefined`. Non-breaking (optional field).
+
+**Reasoning for the reversal:** the original non-goal was written
+against a world where retrieval consumed the raw query and the
+attribute-schema surface did any extraction that mattered. That
+world doesn't have deterministic tools — retrieval-over-prose is
+its own probabilistic layer (see ADR-0016 §1 on framing). Once
+tools enter the pipeline, "extract a canonical product-string
+from the raw query" is a first-class concern that the router is
+the natural home for, because it has the intent context to
+know when extraction is on-topic. ADR-0004's attribute-schema
+extraction still exists — it operates at ingest time on chunk
+content, which is a distinct task from run-time query
+extraction.
+
+**Extraction accuracy needs its own metric.** It cannot ride on
+`intent_classification_accuracy` — that metric measures which of
+six labels the router picked, not whether it correctly pulled
+"Molichaff Hoofkind" out of "do you sell molichaff hoofkind".
+ADR-0016 adds `product_query_extraction_accuracy` (or similar)
+as a separate descriptive metric alongside the existing router
+metrics. Sprint 3 close-out for Story 4 measures baseline, names
+a floor descriptively, and adds it to
+`evals/thresholds/sprint-3.json`. The metric shape follows the
+same "descriptive-first, threshold-second" discipline as
+ADR-0010's `intent_classification_accuracy` and ADR-0014's
+`tool_backed_claim`.
+
+**What this amendment does not decide:** where extraction
+actually runs (rule pass vs LLM pass vs both) or how confidence
+is expressed. ADR-0016 owns those specifics because they're
+tool-facing implementation details; this amendment records only
+the interface change + metric commitment.
