@@ -22,7 +22,7 @@ import {
   NoopPlanner,
   RulesSafetyGate,
   StubToolRegistry,
-  StubTraceSink,
+  SupabaseTraceSink,
 } from '@groundwork/adapters';
 import type {
   Behaviour,
@@ -33,6 +33,7 @@ import type {
   TraceSink,
 } from '@groundwork/core';
 import { renderBehaviour, runToolLoop } from '@groundwork/core';
+import { createClient } from '@supabase/supabase-js';
 import { Hono } from 'hono';
 import OpenAI from 'openai';
 
@@ -172,20 +173,34 @@ function generateTraceId(): string {
 
 /**
  * Instantiate the default production dependencies from env. Called
- * from `server.ts` at request-scope so a missing key produces a 500
- * on the first hit rather than an import-time crash.
+ * from `server.ts` at request-scope so a missing env var produces a
+ * 500 on the first hit rather than an import-time crash.
+ *
+ * Sprint 3 (GW-25) added Supabase requirements — the trace sink
+ * writes to the `traces` table. Router still needs OpenAI. Both
+ * are checked up front; a missing var fails cleanly.
  */
 export function defaultAnswerDeps(): AnswerDeps {
-  const apiKey = process.env['OPENAI_API_KEY'];
-  if (!apiKey) {
+  const openaiKey = process.env['OPENAI_API_KEY'];
+  if (!openaiKey) {
     throw new Error('OPENAI_API_KEY is required for /api/answer');
   }
-  const openai = new OpenAI({ apiKey });
+  const supabaseUrl = process.env['SUPABASE_URL'];
+  const supabaseKey = process.env['SUPABASE_SERVICE_ROLE_KEY'];
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error(
+      'SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for /api/answer (GW-25 trace persistence)',
+    );
+  }
+  const openai = new OpenAI({ apiKey: openaiKey });
+  const supabase = createClient(supabaseUrl, supabaseKey, {
+    auth: { persistSession: false },
+  });
   return {
     router: new HybridRouter(openai),
     safetyGate: new RulesSafetyGate(),
     planner: new NoopPlanner(),
     toolRegistry: new StubToolRegistry(),
-    traceSink: new StubTraceSink(),
+    traceSink: new SupabaseTraceSink(supabase),
   };
 }
