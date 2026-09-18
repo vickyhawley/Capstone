@@ -9,6 +9,7 @@ export { rrf, weightedFusion, type FusionInput, type FusionStrategy } from './re
 
 export { StubLanguageModel } from './language-model/stub-language-model.js';
 export { StubToolRegistry } from './tool-registry/stub-tool-registry.js';
+export { CompositeToolRegistry } from './tool-registry/composite-tool-registry.js';
 export {
   DEFAULT_MIN_MATCH_SCORE,
   ProductStockLookupTool,
@@ -18,6 +19,13 @@ export {
   type StockLookupResult,
   type StockStatus,
 } from './tool-registry/product-stock-lookup-tool.js';
+export {
+  ProductSubstituteLookupTool,
+  SUBSTITUTE_PRIMARY_ATTRIBUTE,
+  type SubstituteCandidate,
+  type SubstituteLookupResult,
+  type SubstituteAttributeAgreement,
+} from './tool-registry/product-substitute-lookup-tool.js';
 export { extractProductQuery } from './router/rules.js';
 export { StubTraceSink } from './trace-sink/stub-trace-sink.js';
 export { SupabaseTraceSink } from './trace-sink/supabase-trace-sink.js';

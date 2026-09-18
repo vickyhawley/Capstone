@@ -18,12 +18,14 @@
  */
 
 import {
+  CompositeToolRegistry,
   HybridRetriever,
   HybridRouter,
   NoopPlanner,
   PgTsRankRetriever,
   PgvectorDenseRetriever,
   ProductStockLookupTool,
+  ProductSubstituteLookupTool,
   RulesSafetyGate,
   SupabaseTraceSink,
   loadStatusOverrideList,
@@ -235,7 +237,12 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
     loadStatusOverrideList(outOfScopePath),
     loadStatusOverrideList(pendingPath),
   ]);
-  const toolRegistry = new ProductStockLookupTool(retriever, dense, outOfScope, pending);
+  const stockLookupTool = new ProductStockLookupTool(retriever, dense, outOfScope, pending);
+  // GW-19: substitute lookup runs after stock_lookup when the loop
+  // dispatches non-exact results. Shares the dense retriever with
+  // stock_lookup — same product corpus, same embedding model.
+  const substituteLookupTool = new ProductSubstituteLookupTool(dense);
+  const toolRegistry = new CompositeToolRegistry([stockLookupTool, substituteLookupTool]);
 
   return {
     router: new HybridRouter(openai),

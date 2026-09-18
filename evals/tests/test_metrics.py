@@ -11,6 +11,7 @@ from groundwork_evals.metrics import (
     product_query_extraction_accuracy,
     recall_at_k,
     retrieval_relevance,
+    substitute_offered_correct,
 )
 from groundwork_evals.schema import ApiResponse, Citation, EvalCase
 
@@ -501,4 +502,51 @@ def test_extraction_accuracy_no_expected_is_not_applicable():
     case = _answer_case()  # no expected_product_query
     resp = ApiResponse(product_query="anything")
     r = product_query_extraction_accuracy(case, resp)
+    assert r.applicable is False
+
+
+# ---------- substitute_offered_correct (GW-19, ADR-0005 addendum) ----------
+
+
+def test_substitute_correct_when_expected_handle_in_response_list():
+    case = _answer_case(expected_substitute_handle="hilight-conditioning-cubes")
+    resp = ApiResponse(substitute_handles=["hilight-conditioning-cubes"])
+    r = substitute_offered_correct(case, resp)
+    assert r.score == 1.0
+    assert r.applicable is True
+
+
+def test_substitute_correct_when_expected_handle_in_multi_response():
+    # Tool returns 0-3 substitutes; expected handle can be any of them.
+    case = _answer_case(expected_substitute_handle="horsehage-timothy")
+    resp = ApiResponse(substitute_handles=["burley-bale-timothy", "horsehage-timothy"])
+    r = substitute_offered_correct(case, resp)
+    assert r.score == 1.0
+
+
+def test_substitute_wrong_when_expected_handle_absent():
+    case = _answer_case(expected_substitute_handle="hilight-conditioning-cubes")
+    resp = ApiResponse(substitute_handles=["some-other-cubes"])
+    r = substitute_offered_correct(case, resp)
+    assert r.score == 0.0
+    assert r.applicable is True
+    assert "hilight-conditioning-cubes" in r.reason
+
+
+def test_substitute_wrong_when_response_returned_empty_list():
+    # Tool returned no substitutes but the SME expected one — this is
+    # a real failure, applicable=True, score 0.
+    case = _answer_case(expected_substitute_handle="horsehage-timothy")
+    resp = ApiResponse(substitute_handles=[])
+    r = substitute_offered_correct(case, resp)
+    assert r.score == 0.0
+    assert r.applicable is True
+
+
+def test_substitute_not_applicable_when_case_unlabelled():
+    # Case 043-shape: unlabelled pending SME follow-up. Metric skips
+    # rather than measures against a guess.
+    case = _answer_case()  # no expected_substitute_handle
+    resp = ApiResponse(substitute_handles=["anything"])
+    r = substitute_offered_correct(case, resp)
     assert r.applicable is False

@@ -68,6 +68,13 @@ class EvalCase(BaseModel):
     tags: list[str] = Field(default_factory=list)
     expected_stock_status: StockStatus | None = None
     expected_product_query: str | None = None
+    # GW-19 field (ADR-0005 addendum 2026-09-18) — populated for cases
+    # tagged `substitute-offered` or `price-tier-substitute` when the
+    # SME can name a specific handle the shop's real answer would
+    # recommend. Null when the case is unlabelled pending SME follow-
+    # up; the substitute smoke skips those. Consumed by
+    # `substitute_offered_correct`.
+    expected_substitute_handle: str | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -129,6 +136,12 @@ class ApiResponse(BaseModel):
     escalation_target: EscalationTarget | None = None
 
     product_query: str | None = None
+    # GW-19 field (ADR-0005 addendum 2026-09-18) — populated by the
+    # tool loop when it dispatches `product.substitute_lookup`. Empty
+    # list when no substitutes were returned (e.g. the tool short-
+    # circuited on `stockStatus: 'exact'`) or when the tool didn't
+    # run for this turn. Consumed by `substitute_offered_correct`.
+    substitute_handles: list[str] = Field(default_factory=list)
 
     model_config = {"extra": "ignore"}
 

@@ -7,6 +7,15 @@
  * ADR-0001's embedding commitment. The embedding call is one round
  * trip per query; batching is a Sprint 2 candidate if p95 latency
  * becomes the bottleneck.
+ *
+ * Metadata hydration (2026-09-18): the `search_chunks_dense` RPC
+ * returns (chunk_id, document_id, chunk_text, score) but not
+ * `metadata`. Consumers reading `.metadata` (ProductStockLookupTool's
+ * `matchedHandle`/`matchedTitle`; ProductSubstituteLookupTool's
+ * anchor + primary-attribute lookup) need it, so this adapter does
+ * one follow-up SELECT keyed by the returned chunk IDs. One extra
+ * round-trip; sub-100ms. Alternative — extend the RPC to return
+ * metadata — is a Postgres migration on the roadmap.
  */
 
 import {
@@ -26,6 +35,11 @@ interface DenseRow {
   readonly score: number;
 }
 
+interface ChunkMetadataRow {
+  readonly id: string;
+  readonly metadata: Readonly<Record<string, unknown>> | null;
+}
+
 export class PgvectorDenseRetriever implements Retriever {
   constructor(
     private readonly supabase: SupabaseClient,
@@ -42,12 +56,33 @@ export class PgvectorDenseRetriever implements Retriever {
       throw new Error(`dense retrieval failed: ${error.message}`);
     }
     const rows = (data ?? []) as DenseRow[];
-    return rows.map((row) => ({
-      chunkId: row.chunk_id,
-      documentId: row.document_id,
-      text: row.chunk_text,
-      score: row.score,
-    }));
+    if (rows.length === 0) return [];
+
+    // Follow-up SELECT for metadata — the RPC returns chunk_text +
+    // score but not metadata. See file header for the rationale.
+    const chunkIds = rows.map((r) => r.chunk_id);
+    const { data: metaData, error: metaError } = await this.supabase
+      .from('chunks')
+      .select('id, metadata')
+      .in('id', chunkIds);
+    if (metaError) {
+      throw new Error(`dense retrieval metadata hydration failed: ${metaError.message}`);
+    }
+    const metaMap = new Map<string, Readonly<Record<string, unknown>>>();
+    for (const m of (metaData ?? []) as ChunkMetadataRow[]) {
+      if (m.metadata) metaMap.set(m.id, m.metadata);
+    }
+
+    return rows.map((row) => {
+      const meta = metaMap.get(row.chunk_id);
+      const base = {
+        chunkId: row.chunk_id,
+        documentId: row.document_id,
+        text: row.chunk_text,
+        score: row.score,
+      };
+      return meta ? { ...base, metadata: meta } : base;
+    });
   }
 
   private async embed(text: string): Promise<number[]> {

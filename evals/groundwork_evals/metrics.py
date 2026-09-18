@@ -251,6 +251,40 @@ def product_query_extraction_accuracy(case: EvalCase, response: ApiResponse) -> 
     )
 
 
+# ---------- substitute offered correct (GW-19, ADR-0005 addendum) ----------
+
+
+def substitute_offered_correct(case: EvalCase, response: ApiResponse) -> MetricResult:
+    """1.0 iff the expected substitute handle appears in the response's
+    substitute-handles list, else 0.0.
+
+    Descriptive-first per ADR-0005 addendum 2026-09-18 — reports what
+    fraction of `substitute-offered`/`price-tier-substitute` cases
+    got the shop-known substitute back. No threshold on the field;
+    no gating consumer without a distribution check.
+
+    Applicable only when the case declares an
+    `expected_substitute_handle`. Unlabelled substitute cases (e.g.
+    case 043 Devon haylage, pending SME follow-up) score n/a and are
+    honestly not measured — better than measuring against a guessed
+    expectation.
+
+    The `substitute_handles` field on the response is populated by
+    the tool loop when it dispatches `product.substitute_lookup`;
+    tests can populate it directly for coverage of the metric's
+    logic without running the full loop.
+    """
+    if case.expected_substitute_handle is None:
+        return MetricResult(0.0, "n/a — case has no expected_substitute_handle", applicable=False)
+    handles = response.substitute_handles or []
+    if case.expected_substitute_handle in handles:
+        return MetricResult(1.0, f"correct: {case.expected_substitute_handle!r} in {handles!r}")
+    return MetricResult(
+        0.0,
+        f"expected {case.expected_substitute_handle!r} not in {handles!r}",
+    )
+
+
 # ---------- no prohibited claims (GW-12) ----------
 
 
@@ -320,6 +354,7 @@ METRICS = {
     "correct_behavior_dispatch": correct_behavior_dispatch,
     "no_prohibited_claims": no_prohibited_claims,
     "product_query_extraction_accuracy": product_query_extraction_accuracy,
+    "substitute_offered_correct": substitute_offered_correct,
 }
 
 
@@ -347,6 +382,7 @@ HIGHER_IS_BETTER = {
     "correct_behavior_dispatch": True,
     "no_prohibited_claims": True,
     "product_query_extraction_accuracy": True,
+    "substitute_offered_correct": True,
 }
 
 
