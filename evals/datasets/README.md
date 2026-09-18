@@ -201,6 +201,67 @@ Good: `real-customer-enquiry — support ticket #4231, 2026-04-12, anonymised by
 Bad: `real-customer-enquiry`
 Bad: `from a customer`
 
+### `expected_stock_status` — enum, optional (default `null`)
+
+Populated for `product`-intent cases whose expected shape is
+unambiguous. One of four states, per ADR-0016 §2:
+
+- `exact` — the shop holds the item; the honest answer is a plain
+  confirmation with catalogue detail.
+- `orderable` — not held but the shop can source on request. NFCS's
+  default posture for retrieval-negative queries.
+- `pending` — not held, will be held once a specific pre-condition
+  is met (regulatory accreditation, unit lease). The tool returns
+  `pendingReason` naming the pre-condition; synthesis composes copy
+  like *"we don't currently stock X — we're waiting on [reason]"*.
+- `unavailable` — not held and the shop won't carry it. Commercial
+  won't-stock (e.g. Ariat, LeMieux — Aivly stocks them locally).
+  The tool returns `outOfScopeReason`; synthesis pivots to a useful
+  answer like *"we don't carry LeMieux; Aivly stocks it locally"*
+  rather than a bare refusal.
+
+**When `null` is legitimate.** Non-product cases; product cases
+whose shape is ambiguous pending SME follow-up (e.g. case 042
+Simple Systems, unclear pending vs orderable); product cases where
+the honest answer is a substitute pivot rather than a status about
+the queried item (e.g. case 043 Devon haylage).
+
+**Field ordering: `exact` beats `unavailable` beats `pending` beats
+`orderable`.** A shipped product overrides policy; a permanent brand
+block overrides a temporary category pending; a committed
+pre-condition overrides the generic sourcing offer. See ADR-0016
+§2 for the argument.
+
+**Historical note.** This field arrived Sprint 3 as four states.
+Earlier drafts of the ADR treated stock as three-state
+(exact/orderable/unavailable). The 2026-09-17 SME correction added
+`pending` as a distinct state (see ADR-0016 §"Why pending is a
+distinct status"). The `three-state-stock` case tag pre-dates the
+correction and is kept stable per §1's "Never rename a case ID"
+rule — the tag name is historical; this field is the current
+source of truth on shape.
+
+### `expected_product_query` — string, optional (default `null`)
+
+The entity string the router is expected to extract from
+`user_input` for `product`-intent cases. Consumed by the
+`product_query_extraction_accuracy` descriptive metric
+(ADR-0010 amendment 3 / ADR-0016 §4).
+
+Populated for the same set of cases as `expected_stock_status` —
+the two fields travel together because the metric that consumes
+`expected_stock_status` (the smoke) also needs the productQuery
+for the tool call, and the metric that consumes
+`expected_product_query` (the extraction-accuracy check) uses the
+same set of product cases.
+
+**Guidance for authors.** Extract the noun phrase the customer
+used, not a normalised catalogue form — the metric measures the
+router's ability to pull the right span from real customer prose.
+Preserve typos and case if the customer wrote them that way
+(*"lemieux"* not *"LeMieux"*; *"purple horsehage"* not
+*"Purple HorseHage"*).
+
 ### `tags` — list of strings, optional (default `[]`)
 
 Cross-cutting case categories that don't correspond to a single
@@ -1082,6 +1143,54 @@ which cases are testing the retriever's freshness vs its
 correctness. A ~7.5% floor of superseded-source cases (3 of 40)
 in Sprint 1's dataset is a useful measurement of that dimension.
 
+### Batch-4 finding (2026-09-17) — the SME correction leaves `unavailable` with no real cases
+
+The SME conversation on 2026-09-17 (see ADR-0016 §"SME correction")
+inverted the negative side of `three-state-stock`. Everything the
+dataset had labelled "cannot supply" turned out to be pending —
+wormers waiting on BETA membership (case 003), electric fencing
+waiting on the unit F1 lease (case 008), Simple Systems mis-
+classified and reverted to orderable (case 042). The permanent
+won't-stock list turned out to be a two-brand commercial decision
+(Ariat + LeMieux, both because Aivly stocks them locally), not
+a category rule.
+
+**Consequence for the dataset:** the four-state model that landed
+in ADR-0016 §2 splits pending off from unavailable as a distinct
+status. Cases 003 / 008 relabel to `pending`. Case 023 (Ariat)
+becomes the only real-customer case for the `unavailable` shape;
+it is one case, and it was authored without knowing what shape it
+would land in. Zero real cases anchor the LeMieux side.
+
+**Constructed coverage added:** case 050
+(`product-050-lemieux-brand-unavailable`) is a
+`constructed-boundary-probe` for the `unavailable` shape on the
+LeMieux side, so both entries in `data/nfcs-out-of-scope.yaml`
+have measurement. The SME's own answer names Aivly as the local
+stockist, so the case's honest answer is *"we don't carry
+LeMieux; Aivly stocks it locally"* — content-full, not a
+refusal.
+
+**Second status with no real-traffic provenance.** With this
+addition, `unavailable` joins `welfare-clinical` as a status
+whose coverage in the dataset is majority-constructed — Ariat
+(case 023) is the only real-traffic anchor; LeMieux (case 050)
+is a constructed probe. The pattern is worth naming: statuses
+where **the cost of an unhandled false-negative is asymmetric to
+the traffic volume** justify constructed coverage even when the
+real sample is empty. Welfare-clinical: a wrong answer harms an
+animal. Unavailable: a false-orderable commits the shop to a
+delivery it cannot fulfil. Both justify carrying constructed
+probes as first-class exam cases.
+
+**Real-traffic follow-up.** When an Ariat or LeMieux question
+appears in a fresh DM export (or via a future channel), the
+new case joins as `real-customer-enquiry` and the constructed
+probe stays alongside it — real cases don't retire boundary
+probes; they augment them. Named as a Sprint 4 candidate:
+solicit an Ariat/LeMieux customer query from the SME to
+strengthen the real-provenance anchor.
+
 ### Batch-3 finding (2026-09-15) — the guide gap ADR-0003 predicted is real
 
 Fifteen of forty cases have no candidate chunk to point at, either
@@ -1164,13 +1273,22 @@ whole-grid total is 49.
 
 |                    | real | boundary | adversarial | **row total** |
 | ------------------ | ---: | -------: | ----------: | ------------: |
-| product            |   21 |        0 |           0 |          **21** |
+| product            |   21 |        1 |           0 |          **22** |
 | fit                |    0 |        4 |           1 |           **5** |
 | logistics          |   11 |        1 |           0 |          **12** |
 | welfare-clinical   |    0 |        2 |           2 |           **4** |
 | out-of-scope       |    1 |        0 |           5 |           **6** |
 | service-referral   |    1 |        0 |           0 |           **1** |
-| **column total**   | **34** |    **7** |       **8** |          **49** |
+| **column total**   | **34** |    **8** |       **8** |          **50** |
+
+**Grid row update (2026-09-17):** product boundary went 0 → 1 with
+the addition of case 050 (`product-050-lemieux-brand-unavailable`).
+Rationale in §5 batch-4 finding: the SME correction left
+`unavailable` with no real-traffic case for the LeMieux side
+(Ariat side has case 023 as real). The constructed probe closes
+the coverage gap for the second status-with-no-real-provenance —
+same rationale that keeps four constructed welfare cases when the
+real sample has zero.
 
 **Sprint 2 addition (GW-17, 2026-09-16):** 9 new real-customer
 product cases (product-041 through product-049) sourced from the

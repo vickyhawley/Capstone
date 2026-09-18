@@ -2737,3 +2737,189 @@ fallback closes it out if not. Owner: Vix Hawley.
 1-12; task #13 runs after case-008 has been measured in its
 `pending` shape (i.e. after task #9 baseline) and before the
 capstone close.
+
+### Story 4 close-out — five tasks landed; smoke reveals RRF-scale threshold mismatch (2026-09-18)
+
+Tasks 6, 7, 8, 9, 12 landed together plus a new task (constructed-
+boundary-probe for `unavailable`). Task 10 is this entry; task 13
+(F1 drift verification) is scheduled contingent on unit F1 opening
+inside the capstone window; task 11 landed earlier as the SME
+conversation that triggered the four-state correction (2026-09-17
+entry above).
+
+**What landed:**
+
+1. **Constructed boundary probe for `unavailable`.** Case 050
+   (`product-050-lemieux-brand-unavailable`) — LeMieux side of the
+   won't-stock list. Ariat side is case 023, real-customer. The
+   SME correction left `unavailable` with zero confirmed real-
+   traffic cases (case 023 is the only anchor and it was authored
+   without knowing what shape it would land in). Constructed
+   coverage carries the shape until real traffic surfaces one, on
+   the same argument that justified four constructed welfare cases
+   with zero welfare real traffic: cost asymmetry justifies
+   coverage. README §5 batch-4 finding names the pattern.
+
+2. **`expected_stock_status` + `expected_product_query` schema
+   fields** on `EvalCase` (`evals/groundwork_evals/schema.py`).
+   Four-state enum (exact/orderable/pending/unavailable), not
+   three. Audit found no other place in the harness assumed a
+   three-value enum. 16 product cases populated with both fields;
+   two intentionally left null pending SME follow-up (case 042
+   Simple Systems — pending vs orderable unclear; case 043 Devon
+   haylage — substitute-first shape, stock status of Devon itself
+   ambiguous). README §1 documents the two new fields.
+
+3. **`product_query_extraction_accuracy` metric.** Descriptive-
+   first per ADR-0010 amendment 3 / ADR-0016 §4. Case-insensitive
+   with whitespace normalisation — the router's job is entity
+   coverage, not canonicalisation. Applicable only when the case
+   declares an expected extraction. Registered in `METRICS` and
+   `HIGHER_IS_BETTER`. Six unit tests cover exact match, case-
+   insensitive match, whitespace normalisation, wrong extraction,
+   missing extraction, and n/a on unlabelled cases.
+
+4. **`product_query` field on `ApiResponse`.** Surfaces
+   `RouterDecision.productQuery` in the JSON response.
+   `AnswerResponseBody` in `apps/api/src/answer.ts` extended;
+   integration test added covering the surfacing path.
+
+5. **`product.stock_lookup` wired into the default tool registry**
+   (`apps/api/src/answer.ts::defaultAnswerDeps`). `StubToolRegistry`
+   replaced with a `ProductStockLookupTool` composed with a
+   `HybridRetriever` (dense + sparse + RRF) and both YAML files.
+   `defaultAnswerDeps` is now async — `server.ts` caches the
+   promise so concurrent first-hit requests share one resolution.
+   `toolRegistry.list()` is not called by any current code path
+   (NoopPlanner terminates the loop immediately); when a real
+   planner or Tier-1 dispatch shim lands, the composition root
+   will need to await deps up front.
+
+6. **Mandatory close-out smoke.**
+   `packages/adapters/scripts/smoke-product-stock-lookup.ts` runs
+   two phases: (1) characterisation with `minMatchScore: null` →
+   report top-1 match-score distribution grouped by expected
+   status; (2) shape validation at the tool's default
+   (`DEFAULT_MIN_MATCH_SCORE = 0.5`) → PASS/FAIL exit code.
+   Distribution first, per the instruction to see the data before
+   naming the floor. Baseline ran against real Supabase.
+
+**Baseline distribution (Phase 1, minMatchScore = null):**
+
+```
+exact         n=4  min=0.032  median=0.033  mean=0.033  max=0.033
+                 scores: 0.032, 0.033, 0.033, 0.033
+orderable     n=8  min=0.016  median=0.033  mean=0.028  max=0.033
+                 scores: 0.016, 0.016, 0.029, 0.033, 0.033, 0.033, 0.033, 0.033
+pending       n=2  min=0.016  median=0.016  mean=0.016  max=0.016
+                 scores: 0.016, 0.016
+unavailable   n=2  min=0.016  median=0.016  mean=0.016  max=0.016
+                 scores: 0.016, 0.016
+```
+
+**Baseline validation (Phase 2, minMatchScore = 0.5): 12/16 pass.**
+
+The four failures are all `exact`-expected cases: 007
+(purple horsehage), 021 (Thunderbrook), 047 (Burlybed), 048
+(hemp bedding). Each returned `orderable` when the corpus
+contains the product — the top-1 score (0.032-0.033) is well
+below the 0.5 floor.
+
+**The load-bearing finding — RRF vs cosine scale mismatch:**
+
+Reciprocal Rank Fusion scores are structurally on a different
+scale from cosine similarity. Every observed top-1 score sits in
+`[0.016, 0.033]` — the RRF space with `k=60` produces
+`1/(rank+k)` values that never exceed ~`2/k = 0.033` even for a
+rank-0 hit in both children. The tool's provisional default of
+`0.5` (ADR-0016 §3) was calibrated for cosine-similarity semantics
+and is architecturally wrong for RRF-fused input. At 0.5, no real
+query passes the floor — every retrieval-positive case falls
+through to `orderable` regardless of catalogue truth.
+
+**And there is no clean floor in RRF space either.** The
+distribution shows overlap: `orderable`-expected cases reach
+0.033 (rank-0 in both children on tangential product-type chunks)
+same as `exact`-expected cases. A floor of ~0.030 would preserve
+some exact matches but false-positive on ~5/8 orderable-expected
+cases. RRF fusion, on this corpus, doesn't separate the signal.
+
+Three follow-up shapes come out of this — Vix names the floor
+at close-out (per the instruction to see the distribution and
+decide), but the choice will shape the follow-ups:
+
+- **Option A — score on the pre-fusion cosine directly.** Change
+  the tool to consult the top-1 dense retrieval score against a
+  cosine-scale threshold (~0.5). RRF continues to drive ordering
+  and citation retrieval; the floor applies to cosine. Small
+  change to the retriever port surface; the fix stays inside
+  the tool.
+- **Option B — add a rerank stage that produces a normalised
+  confidence score.** Larger scope, but a rerank is a Sprint 4
+  candidate anyway (ADR-0005 substitute ranking + reranker
+  interface).
+- **Option C — recalibrate the threshold to RRF scale AND accept
+  the exact/orderable overlap as a known false-positive rate.**
+  A floor of ~0.030 catches most exact matches but produces
+  false-exact on some orderable queries — the fault mode
+  ADR-0016 §3 explicitly ranks as the worse of the two.
+  Documenting this as a known limitation, then depending on the
+  substitute-offered path (GW-19) to catch false-exact
+  synthesis. Weakest of the three; recorded for completeness.
+
+**Floor decision: DEFERRED to Vix.** The distribution is in the
+sprint log; the ADR-0016 §3 provisional 0.5 stands as the code
+default until named. Nothing on a customer-reaching path passes
+`minMatchScore: null`; the smoke is the only caller that does.
+Task #10 is complete without a numeric floor because the choice
+belongs to whoever picks the architectural direction (A / B / C
+above), not to the smoke.
+
+**Metric baselines that CAN be reported now:**
+
+- `stock_status_correct` (embedded in the smoke): 12/16 = 0.75
+  at the 0.5 default. All four failures share one cause — the
+  RRF-scale mismatch — so the number is a diagnostic of the
+  threshold, not of the shape logic. The four override-anchored
+  cases (pending × 2, unavailable × 2) score 4/4; the orderable
+  cases score 8/8; the exact cases score 0/4.
+- `product_query_extraction_accuracy`: not yet measurable end-
+  to-end. The metric is registered and unit-tested; running it
+  against real router output needs a harness run through
+  `/api/answer`, which will surface `product_query` in the
+  response body. The smoke tests the tool directly and doesn't
+  exercise the router — a full harness run is the natural venue.
+
+**Follow-ups added to Sprint 4 candidates:**
+
+- **RRF ↔ cosine scale mismatch resolution** (blocking on the
+  next Story-4-shaped iteration). Options A / B / C above; Vix
+  picks.
+- **`toolRegistry.list()` deferred wiring.** Currently returns
+  `[]` in the API proxy because `list()` is unused. When a real
+  planner or Tier-1 dispatch shim lands, the composition root
+  must await deps up front. Named here so the next planner story
+  doesn't rediscover the sequencing.
+- **Populate `expected_stock_status` for cases 042 + 043** once
+  the SME confirms. Both currently null pending follow-up. The
+  smoke silently skips unlabelled cases; adding them requires no
+  code change, just a data edit.
+- **End-to-end harness run against `/api/answer`** to measure
+  `product_query_extraction_accuracy` and cross-check
+  `stock_status_correct` at the API level rather than the tool
+  level. Not blocking Story 4 close.
+- **`unavailable`-shape real-customer case** solicited from the
+  SME. §5 batch-4 in the dataset README names this — the
+  constructed probe (case 050) plus the unlabelled real case
+  (case 023) currently anchor the shape.
+- **Trace-span emission for the tool call.** ADR-0016 §7 named
+  this as part of the smoke, but the tool itself doesn't emit
+  spans (that's the tool-loop's job wrapping invoke). GW-25's
+  smoke covers sink→DB directly; a loop-integrated tool-call
+  trace test is deferred until a real planner or Tier-1 shim
+  actually invokes the tool through the loop from `/api/answer`.
+
+**Story 4 status: closed with a known floor-decision follow-up.**
+The tool, the schema fields, the metric, the smoke, and the
+distribution baseline all landed. The one thing missing — a
+named floor — is deferred by design.
