@@ -260,3 +260,121 @@ Sprint 1 — it is a measured retrieval requirement, and the tag
 GW-19 implementation lands in Sprint 3 as this ADR describes;
 until then, substitute-offered cases exercise the retriever's
 ability to surface the equivalent alongside the queried item.
+
+---
+
+## Addendum — GW-19 landed (2026-09-18)
+
+Sprint 3 close: `product.substitute_lookup` shipped. This addendum
+records the final design (which diverged from Option C's original
+framing in one important way) and what got dropped or roadmapped.
+
+### What actually landed
+
+- **Separate tool, not a return-shape extension on `stock_lookup`.**
+  Same rationale as the sprint-log design proposal: separable
+  metrics, separable trace spans, separable composability.
+  `product.stock_lookup` and `product.substitute_lookup` are
+  composed via a `CompositeToolRegistry` in the default answer
+  deps.
+- **Path B — anchor on the top-1 dense-retrieval candidate's
+  metadata.** No LLM call per invocation. Fall-through with a
+  `note` when metadata is missing. Path A (query-side attribute
+  extraction) is on the roadmap.
+- **Re-invoke retrieval, don't thread `stock_lookup`'s chunks
+  through the loop.** One extra embedding per invocation for tool
+  separability; per-request embedding cache is a Sprint-4
+  optimisation.
+
+### What changed at smoke time
+
+The design proposal said the substitute rule was: same type + same
+primary attribute value + non-null + **different handle from the
+anchor**. The 2026-09-18 smoke on case 022 (Haygates → HiLight
+conditioning cubes) inverted the "different handle" clause: **when
+`stock_lookup` returned non-exact, the top-1 dense hit IS the
+substitute the shop would recommend.** The anchor and the answer
+are the same chunk. Excluding it and pivoting to other candidates
+was over-engineering.
+
+The revised rule:
+
+1. Chunk has `type` metadata (drops guide chunks that slipped past
+   the retriever's content_type filter).
+2. Chunk's `type` matches the anchor's type.
+3. The anchor IS included as a valid substitute — the "closest
+   product we stock" is the primary answer.
+
+The **primary attribute** (Feed → form, Haylage → cut_type,
+Bedding → material, Supplements → target_concern, Outerwear → fit)
+is READ FROM the anchor and reported per-candidate on
+`attributeAgreement[]` for observability. It is NOT used as a
+filter. The 2026-09-18 smoke also surfaced an ADR-0004 extraction
+quality issue: `hilight-conditioning-cubes` has `form: mix` in its
+extracted attributes (should be `cube`). Using a wrong extraction
+as a filter dropped valid substitutes. Attribute quality is on the
+roadmap; the tool trusts retrieval's top-K for candidate selection.
+
+### Baseline (2026-09-18)
+
+Golden-case validation, one phase (no threshold to characterise):
+
+```
+product-022-haygates-conditioning-cubes  →  expected: hilight-conditioning-cubes
+                                            got: [hilight-conditioning-cubes,
+                                                  baileys-no4-top-line-cubes-20kg,
+                                                  saracens-competition-fit-cubes]
+                                            PASS
+product-044-western-timothy-haylage      →  expected: horsehage-timothy
+                                            got: [horsehage-timothy,
+                                                  burlybale-rye-grass,
+                                                  burlybale-pasture]
+                                            PASS
+```
+
+Anchor coverage: 2/2 anchors had primary attribute present.
+
+**Real observability finding on case 044:** `burlybale-rye-grass`
+came back as a candidate for a Timothy query because both are
+`type: Haylage`. Ryegrass and Timothy are different species; the
+customer choosing Timothy would not be well-served by ryegrass.
+The primary attribute check would catch this (anchor cut_type =
+timothy, candidate cut_type = ryegrass), but it's turned off in
+the first pass because ADR-0004 extraction quality is
+inconsistent. Named as a roadmap item.
+
+### Explicit roadmap items (post-capstone, dated 2026-09-18)
+
+1. **Complement graph.** ADR-0005 §Chunk metadata requirements
+   called for a hand-authored ~50-pair complement graph. Not in
+   GW-19's first pass; every different-type candidate is dropped
+   as unrelated. Sprint-4 sub-story.
+2. **ADR-0004 attribute quality gate.** The smoke revealed at
+   least one wrong extraction (`hilight-conditioning-cubes` →
+   `form: mix`). A coverage-and-correctness pass on ADR-0004 is
+   the prerequisite for turning the primary attribute back into a
+   filter.
+3. **Primary attribute as filter, not just observability.** Once
+   attribute quality is trusted, revisit — this would drop wrong-
+   species candidates like the case-044 ryegrass observation.
+4. **Learned relationships** (McAuley co-view / co-purchase per
+   the original ADR). Needs real traffic; Sprint 4+.
+5. **Price-tier ranking axis** (README §3 `price-tier-substitute`).
+   Prices surfaced per-candidate today; the first pass doesn't
+   sort on price gap.
+6. **Path A query-side attribute extraction.** LLM call per
+   invocation to extract the query's implied primary attribute
+   rather than reading it from the top-1 corpus chunk. Only
+   justified if the smoke measures a meaningful "no anchor" or
+   wrong-anchor fall-through rate under Path B; current baseline
+   is 2/2 anchor coverage.
+7. **Retriever content_type filter enforcement.** The dense/
+   sparse retrievers currently accept a `content_type` filter but
+   don't apply it in the RPC — the tool's rule 1 (`type` metadata
+   required) works around this. A migration to plumb the filter
+   through is the real fix. Sprint-4 candidate.
+8. **PgvectorDenseRetriever RPC metadata.** The RPC
+   `search_chunks_dense` returns (chunk_id, document_id,
+   chunk_text, score) but not `metadata`. This adapter does a
+   follow-up SELECT to hydrate metadata; a migration to include
+   metadata in the RPC output would drop the round-trip.

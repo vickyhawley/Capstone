@@ -3282,3 +3282,92 @@ roadmap list above, not turned into new tasks. Story close-outs
 report what shipped and what got recorded — a shorter shape than
 Story 4's thirteen-task arc. The exception, as above, is a live
 safety failure surfaced during the smoke.
+
+### GW-19 shipped — substitute ranking landed, 2/2 smoke pass (2026-09-18)
+
+Second of the four freeze-scoped stories. Ship-story-run-smoke-
+record-finding-move-on discipline. Details on the design landed
+in ADR-0005 addendum; recording the sprint-shape summary here.
+
+**What landed:**
+
+- `ProductSubstituteLookupTool` (`packages/adapters/src/tool-
+  registry/product-substitute-lookup-tool.ts`). Takes a
+  `Retriever` (dense) + `productQuery` + `stockStatus`. Runs
+  retrieval, anchors on the top-1 candidate's metadata, returns
+  0–3 same-type substitutes ordered same-vendor → cosine → chunk-
+  id lex. Handles `stockStatus: 'exact'` by short-circuiting.
+  16 unit tests.
+- `CompositeToolRegistry` (`composite-tool-registry.ts`). Small
+  dispatcher that composes multiple single-tool registries into
+  the ToolRegistry port. `defaultAnswerDeps` now wires
+  `[stockLookupTool, substituteLookupTool]` through it. Replaces
+  the previous single-tool registry pattern.
+- `EvalCase.expected_substitute_handle: str | None` on Pydantic
+  schema. Populated for cases 022 (`hilight-conditioning-cubes`)
+  and 044 (`horsehage-timothy`). Case 043 (Devon haylage) stays
+  unlabelled per the design decision — measuring against a guess
+  would be worse than skipping.
+- `substitute_offered_correct` metric. Descriptive-first. 1.0 iff
+  the expected handle appears in the response's substitute list;
+  n/a when unlabelled. 5 unit tests. Registered in `METRICS` and
+  `HIGHER_IS_BETTER`.
+- `ApiResponse.substitute_handles: list[str]` field. Populated by
+  the tool loop when it dispatches `product.substitute_lookup`.
+- One-phase smoke script (`smoke-product-substitute-lookup.ts`).
+  Validation only, per the sprint-3 freeze — no threshold to
+  characterise. Anchor coverage reported as a line rather than a
+  phase.
+
+**Baseline (2026-09-18):**
+
+Two scored cases; both pass. Zero unlabelled skipped in the
+substitute-tagged cases.
+
+```
+PASS  product-022 haygates conditioning cubes → hilight-conditioning-cubes (first of 3)
+PASS  product-044 western timothy haylage    → horsehage-timothy       (first of 3)
+Anchor coverage: 2/2 primary attribute present.
+```
+
+**Design changed at smoke time — recorded honestly.** The design
+proposal had "same primary attribute value AND different handle
+from the anchor" as the substitute rule. Smoke on case 022 showed
+this was wrong: when `stock_lookup` returns non-exact, the top-1
+IS the substitute the shop stocks, not a pivot to look elsewhere
+from. Rule revised to: same type + include anchor. Primary
+attribute is now observability-only. Reason: ADR-0004 extraction
+quality can't yet support attribute filtering (hilight-
+conditioning-cubes has `form: mix` in its extracted attributes,
+which would have dropped valid cube substitutes). See ADR-0005
+addendum for the full rationale.
+
+**Also discovered along the way — recorded on roadmap, NOT worked
+this sprint:**
+
+- **ADR-0004 quality gap.** `hilight-conditioning-cubes` has the
+  wrong `form` extraction. Sprint-4-shaped follow-up: a
+  coverage+correctness pass on ADR-0004's outputs.
+- **PgvectorDenseRetriever didn't hydrate `metadata`.** The RPC
+  returns (chunk_id, document_id, chunk_text, score) only.
+  Fixed at the adapter level with a follow-up SELECT — one extra
+  round-trip, ~50ms. A migration to fold metadata into the RPC is
+  a Sprint-4 candidate. Side-effect: `ProductStockLookupTool`'s
+  `matchedHandle` / `matchedTitle` fields now surface correctly
+  instead of silently returning `null`.
+- **Wrong-species retrieval passes the substitute filter.**
+  `burlybale-rye-grass` came back as a candidate substitute for
+  "Western Timothy Haylage". Same type (Haylage) so it passes;
+  the primary-attribute check would filter it out but is turned
+  off pending ADR-0004 quality. Named honestly rather than fixed.
+- **Retriever `content_type` filter not enforced in the RPC.**
+  The tool works around this with rule 1 (type metadata
+  required); a migration to plumb the filter through is
+  a Sprint-4 candidate.
+
+**Test counts:** adapter suite 138 (was 123, +16 for substitute
+tool minus one test that moved to the revised design); Python
+suite 107 (was 102, +5 for substitute metric).
+
+**Sprint 3 remaining:** GW-21 delivery zone; GW-23 circuit
+breaker. GW-24 model tiering opportunistically.
