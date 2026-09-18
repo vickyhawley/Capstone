@@ -96,6 +96,141 @@ const MAX_MATCHED_CHUNK_IDS = 5;
  *  general retriever top-K (which serves synthesis, not the tool). */
 const RETRIEVAL_TOP_K = 5;
 
+/** Minimum length of a query token that gets considered for the
+ *  handle-match check. Sub-3-char tokens are noise ("of", "in", "to"
+ *  after stopword removal, plus fragments like abbreviations). */
+const TOKEN_MIN_LEN = 3;
+
+/**
+ * Stopword list for the handle-match check (ADR-0016 §3.5). English-
+ * only, shop-domain-tuned. Deliberately hard-coded in this file — no
+ * runtime dependency, no locale concern, and the risk of some other
+ * caller grabbing it and applying it in a different context is real.
+ *
+ * The list captures four classes of shop-question boilerplate the
+ * customer wraps their real query in:
+ *   1. Grammar (articles, prepositions, conjunctions, pronouns,
+ *      auxiliary verbs).
+ *   2. Shop-question framing ("do you sell / stock / carry X").
+ *   3. Social filler ("hi", "please", "thanks").
+ *   4. Fragments ("yes", "no", "ok").
+ * Everything else — brand names, product types, colour codes,
+ * variant descriptors — stays as a "content" token that must be
+ * grounded in the matched chunk before `exact` is claimed.
+ */
+const STOPWORDS: ReadonlySet<string> = new Set([
+  // articles / determiners
+  'the',
+  'this',
+  'that',
+  'these',
+  'those',
+  // prepositions
+  'for',
+  'with',
+  'from',
+  // conjunctions
+  'and',
+  'but',
+  // pronouns
+  'you',
+  'your',
+  'our',
+  'they',
+  'their',
+  // auxiliary verbs
+  'does',
+  'did',
+  'are',
+  'was',
+  'were',
+  'have',
+  'has',
+  'had',
+  'can',
+  'could',
+  'will',
+  'would',
+  // shop-question verbs
+  'sell',
+  'stock',
+  'carry',
+  'get',
+  'order',
+  'need',
+  'want',
+  'buy',
+  'purchase',
+  // filler / social
+  'please',
+  'hello',
+  'hey',
+  'thanks',
+  'cheers',
+  // fragments (3+ chars)
+  'yes',
+  'yeah',
+  'yep',
+  'nope',
+]);
+
+/**
+ * Extract "content" tokens from a customer's productQuery. Content
+ * tokens are: lowercased; split on whitespace, hyphens, underscores,
+ * and common punctuation; filtered to length ≥ 3 and not in
+ * `STOPWORDS`. Exported for unit-testability; used by
+ * `matchesQueryTokens` below.
+ */
+export function extractContentTokens(query: string): readonly string[] {
+  return query
+    .toLowerCase()
+    .split(/[\s\-_,.!?;:()"'/]+/u)
+    .filter((t) => t.length >= TOKEN_MIN_LEN && !STOPWORDS.has(t));
+}
+
+/**
+ * ADR-0016 §3.5 handle-match check. Before returning `exact`, every
+ * content token from the query must appear as a substring of the
+ * matched chunk's `handle`, `title`, or `text` (concatenated,
+ * case-insensitive). Word order does not matter; the check is
+ * grounded on presence.
+ *
+ * Rationale: cosine similarity finds semantically-adjacent chunks
+ * (same species, same category) — that's what it should do — but
+ * two Timothy haylages from different brands are semantically close
+ * and commercially distinct. The distinction lives in whether the
+ * brand tokens are grounded in the chunk's identity, not in the
+ * similarity score.
+ *
+ * Known limitations (ADR-0016 §3.5):
+ *   - Typos regress to `orderable` (safe direction). Fuzzy matching
+ *     is the eventual answer, not this check.
+ *   - Trade-synonym queries where the customer uses a colour-code
+ *     name the corpus doesn't use (e.g. "purple horsehage" ↔
+ *     "HorseHage Timothy") regress to `orderable`. ADR-0009 (synonym
+ *     dictionary) is where that's fixed.
+ *   - Brand-name-in-unrelated-product still passes. Would need
+ *     brand-specific attribute extraction to catch.
+ *
+ * Empty-content edge case: if the query has zero content tokens
+ * after stopword + length filtering (pathological queries, e.g.
+ * just "hi please"), the check returns `true`. The retrieval
+ * already found something, and the tool has no better signal to
+ * gate on. In practice this is unreachable — the router won't emit
+ * a productQuery for an empty-content utterance.
+ */
+export function matchesQueryTokens(
+  query: string,
+  chunk: { readonly text: string; readonly metadata?: Readonly<Record<string, unknown>> },
+): boolean {
+  const tokens = extractContentTokens(query);
+  if (tokens.length === 0) return true;
+  const handle = readStringMetadata(chunk.metadata, 'handle') ?? '';
+  const title = readStringMetadata(chunk.metadata, 'title') ?? '';
+  const haystack = `${handle} ${title} ${chunk.text}`.toLowerCase();
+  return tokens.every((t) => haystack.includes(t));
+}
+
 export type StockStatus = 'exact' | 'orderable' | 'pending' | 'unavailable';
 
 export interface StockLookupResult {
@@ -239,7 +374,15 @@ export class ProductStockLookupTool implements ToolRegistry {
       topScore !== null &&
       (effectiveMinScore === null || topScore >= effectiveMinScore);
 
-    if (passesFloor && matches[0]) {
+    // ADR-0016 §3.5 handle-match check: cosine alone can't distinguish
+    // "same species, different brand" (e.g. Western Timothy Haylage vs
+    // HorseHage Timothy — semantically close, commercially distinct).
+    // Every content token from the query must be grounded in the
+    // matched chunk's identity before `exact` is claimed. Failure
+    // falls through to the override checks and, absent a match,
+    // orderable.
+    const tokensGrounded = matches[0] !== undefined && matchesQueryTokens(productQuery, matches[0]);
+    if (passesFloor && matches[0] && tokensGrounded) {
       const top = matches[0];
       const value: StockLookupResult = {
         status: 'exact',

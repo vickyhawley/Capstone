@@ -18,6 +18,8 @@ import {
   DEFAULT_MIN_MATCH_SCORE,
   ProductStockLookupTool,
   type StockLookupResult,
+  extractContentTokens,
+  matchesQueryTokens,
 } from './product-stock-lookup-tool.js';
 
 function makeRetriever(results: readonly RetrievedChunk[]): Retriever {
@@ -200,7 +202,12 @@ describe('ProductStockLookupTool', () => {
       );
       const result = await tool.invoke({
         name: 'product.stock_lookup',
-        args: { productQuery: 'do you sell TestBrandA items' },
+        // Handle-match check (ADR-0016 §3.5): "TestBrandA item"
+        // singular so tokens ground against the fixture chunk's
+        // title. This test is about override ordering, not the
+        // stemming question — the stemming/plural limitation is
+        // named in the ADR and covered by its own tests below.
+        args: { productQuery: 'TestBrandA item' },
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
@@ -274,7 +281,11 @@ describe('ProductStockLookupTool', () => {
       );
       const result = await tool.invoke({
         name: 'product.stock_lookup',
-        args: { productQuery: 'boundary match' },
+        // Query tokens must ground against the default fixture
+        // metadata (`handle: 'test-handle', title: 'Test Product'`)
+        // per the handle-match check (ADR-0016 §3.5). This test is
+        // about `>= floor`, not about the grounding check.
+        args: { productQuery: 'test product' },
       });
       expect(result.ok).toBe(true);
       expect((result as { value: StockLookupResult }).value.status).toBe('exact');
@@ -287,7 +298,9 @@ describe('ProductStockLookupTool', () => {
       const tool = makeTool(makeRetriever([makeChunk({ score: 0.01 })]), OUT_OF_SCOPE);
       const result = await tool.invoke({
         name: 'product.stock_lookup',
-        args: { productQuery: 'anything', minMatchScore: null },
+        // Grounded query per §3.5 — this test is about the null-
+        // floor code path.
+        args: { productQuery: 'test product', minMatchScore: null },
       });
       expect(result.ok).toBe(true);
       expect((result as { value: StockLookupResult }).value.status).toBe('exact');
@@ -383,7 +396,10 @@ describe('ProductStockLookupTool', () => {
       );
       const result = await tool.invoke({
         name: 'product.stock_lookup',
-        args: { productQuery: 'test' },
+        // Handle-match check (ADR-0016 §3.5) falls back to `chunk.text`
+        // when handle/title are absent. The default fixture text is
+        // "some product content" — tokens ground against that.
+        args: { productQuery: 'some product content' },
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
@@ -483,6 +499,175 @@ describe('ProductStockLookupTool', () => {
       const value = result.value as StockLookupResult;
       expect(value.status).toBe('orderable');
       expect(value.matchScore).toBeNull();
+    });
+  });
+
+  describe('handle-match check (ADR-0016 §3.5) — extractContentTokens', () => {
+    it('lowercases + splits on whitespace + drops stopwords + enforces length ≥ 3', () => {
+      expect(extractContentTokens('do you sell Molichaff Hoofkind')).toEqual([
+        'molichaff',
+        'hoofkind',
+      ]);
+    });
+
+    it('splits on hyphens and underscores as well as whitespace', () => {
+      // Shopify-style handles and multi-word product names split
+      // the same way. `Western-Timothy_Haylage` → three tokens.
+      expect(extractContentTokens('Western-Timothy_Haylage')).toEqual([
+        'western',
+        'timothy',
+        'haylage',
+      ]);
+    });
+
+    it('drops punctuation and social filler', () => {
+      expect(extractContentTokens('Hi! Please, do you carry Ariat?')).toEqual(['ariat']);
+    });
+
+    it('drops sub-3-char tokens even if not in the stopword list', () => {
+      // "ok" and "hi" are stopwords; "a" and "b" are sub-3-char.
+      expect(extractContentTokens('do a b 4x hats')).toEqual(['hats']);
+    });
+
+    it('returns an empty list when the query is only stopwords + filler', () => {
+      expect(extractContentTokens('hi please do you have')).toEqual([]);
+    });
+  });
+
+  describe('handle-match check (ADR-0016 §3.5) — matchesQueryTokens', () => {
+    it('returns true when every content token appears in handle + title + text', () => {
+      const chunk = {
+        text: 'Molichaff Hoofkind supports laminitic feed regimes',
+        metadata: { handle: 'molichaff-hoofkind', title: 'Molichaff Hoofkind' },
+      };
+      expect(matchesQueryTokens('Molichaff Hoofkind', chunk)).toBe(true);
+    });
+
+    it('returns false when any content token is missing from the haystack', () => {
+      // Case 044 shape — "Western Timothy Haylage" vs a HorseHage
+      // Timothy chunk. `western` is not present anywhere. Rule
+      // fails, tool falls through to orderable.
+      const chunk = {
+        text: 'HorseHage Timothy grass is higher in fibre and lower in protein…',
+        metadata: { handle: 'horsehage-timothy', title: 'HorseHage Timothy Haylage' },
+      };
+      expect(matchesQueryTokens('Western Timothy Haylage', chunk)).toBe(false);
+    });
+
+    it('is case-insensitive', () => {
+      const chunk = {
+        text: 'some product body',
+        metadata: { handle: 'MOLICHAFF-HOOFKIND', title: 'Molichaff Hoofkind' },
+      };
+      expect(matchesQueryTokens('molichaff HOOFKIND', chunk)).toBe(true);
+    });
+
+    it('scans chunk.text when handle/title are absent', () => {
+      const chunk = { text: 'ariat mentioned in body', metadata: {} };
+      expect(matchesQueryTokens('Ariat', chunk)).toBe(true);
+    });
+
+    it('order does not matter — the check is on presence, not sequence', () => {
+      const chunk = {
+        text: '',
+        metadata: { handle: 'molichaff-hoofkind', title: 'Molichaff Hoofkind' },
+      };
+      // Reversed order — "Hoofkind Molichaff" still grounds.
+      expect(matchesQueryTokens('Hoofkind Molichaff', chunk)).toBe(true);
+    });
+
+    it('empty-content queries return true (pathological edge case)', () => {
+      // "Hi please do you have" has zero content tokens after
+      // stopword + length filtering. Rule passes because there is
+      // nothing to check — the tool falls back to floor + retrieval
+      // alone. Documented in ADR-0016 §3.5.
+      const chunk = { text: 'anything', metadata: {} };
+      expect(matchesQueryTokens('hi please do you have', chunk)).toBe(true);
+    });
+
+    it('typos are the genuine limitation — mid-word substitution fails', () => {
+      // Documented in ADR-0016 §3.5: typos regress to `orderable`
+      // (safer failure direction). Fuzzy/edit-distance match is
+      // the eventual answer. Note the substring check catches
+      // some typos accidentally (a truncation like "molichaf" is
+      // a substring of "molichaff") and misses others (mid-word
+      // substitution like "moliehaff" isn't). The check is
+      // presence, not fuzzy match.
+      const chunk = { text: '', metadata: { handle: 'molichaff-hoofkind', title: '' } };
+      expect(matchesQueryTokens('moliehaff hoofkind', chunk)).toBe(false);
+    });
+
+    it('trade-synonym queries regress — "purple horsehage" vs HorseHage Timothy chunk', () => {
+      // Case 007 shape — customer uses HorseHage's colour code
+      // ("Purple" = Timothy) but the corpus chunk uses the canonical
+      // species name. `purple` is not present in the chunk anywhere.
+      // Rule fails, case regresses from currently-exact to orderable.
+      // ADR-0009 (synonym dictionary) is where this class is fixed.
+      const chunk = {
+        text: 'HorseHage Timothy grass is higher in fibre and lower in protein…',
+        metadata: { handle: 'horsehage-timothy', title: '' },
+      };
+      expect(matchesQueryTokens('purple horsehage', chunk)).toBe(false);
+    });
+  });
+
+  describe('handle-match check (ADR-0016 §3.5) — integration with the exact branch', () => {
+    it('cosine passes floor + tokens grounded → exact', async () => {
+      const hybrid = makeRetriever([
+        makeChunk({
+          score: 0.033,
+          chunkId: 'molichaff-chunk',
+          metadata: { handle: 'molichaff-hoofkind', title: 'Molichaff Hoofkind' },
+        }),
+      ]);
+      const dense = makeRetriever([
+        makeChunk({
+          score: 0.72,
+          chunkId: 'molichaff-chunk',
+          metadata: { handle: 'molichaff-hoofkind', title: 'Molichaff Hoofkind' },
+        }),
+      ]);
+      const tool = new ProductStockLookupTool(hybrid, dense, OUT_OF_SCOPE);
+      const result = await tool.invoke({
+        name: 'product.stock_lookup',
+        args: { productQuery: 'Molichaff Hoofkind' },
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const value = result.value as StockLookupResult;
+      expect(value.status).toBe('exact');
+    });
+
+    it('cosine passes floor + tokens ungrounded → orderable (case-044 defence)', async () => {
+      // Query names a brand ("Western") that isn't in the chunk. Cosine
+      // sees them as similar (both Timothy haylages) but the tool
+      // refuses to claim exact. This is the false-`exact` failure
+      // Option A alone couldn't catch.
+      const hybrid = makeRetriever([
+        makeChunk({
+          score: 0.033,
+          chunkId: 'horsehage-timothy-chunk',
+          metadata: { handle: 'horsehage-timothy', title: 'HorseHage Timothy Haylage' },
+          text: 'HorseHage Timothy is a grass haylage with high fibre…',
+        }),
+      ]);
+      const dense = makeRetriever([
+        makeChunk({
+          score: 0.644,
+          chunkId: 'horsehage-timothy-chunk',
+          metadata: { handle: 'horsehage-timothy', title: 'HorseHage Timothy Haylage' },
+          text: 'HorseHage Timothy is a grass haylage with high fibre…',
+        }),
+      ]);
+      const tool = new ProductStockLookupTool(hybrid, dense, OUT_OF_SCOPE);
+      const result = await tool.invoke({
+        name: 'product.stock_lookup',
+        args: { productQuery: 'Western Timothy Haylage' },
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const value = result.value as StockLookupResult;
+      expect(value.status).toBe('orderable');
     });
   });
 });
