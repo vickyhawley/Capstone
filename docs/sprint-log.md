@@ -3155,3 +3155,130 @@ HorseHage Timothy". The retriever found the substitute; the
 tool now correctly labels the relationship as `orderable`; GW-19
 turns the labelled relationship into a surfaced recommendation.
 Design pending.
+
+### Sprint 3 scope freeze — four stories to close, everything else moves to roadmap (2026-09-18)
+
+Sprint 3 has produced good engineering and is now the thing standing
+between the capstone and submission. Every story has surfaced real
+follow-ups and I've honoured all of them — Story 4 alone ran to
+thirteen tasks and three findings. Sprint 4 still contains the design
+document, the cost model, accessibility, the end-to-end suite, a
+final eval run, and a twenty-minute recording. None of that
+compresses. So Sprint 3 stops absorbing follow-ups.
+
+**Sprint 3 closes when four more things land:**
+
+1. **Handle-match check** — in design now (ADR-0016 §3.5 landed; GW-20
+   follow-on to fix the case 044 false-`exact`).
+2. **GW-19 substitute ranking** — ADR-0005 design + user's answers
+   above. Path B (top-1-metadata anchor), re-invoke retrieval,
+   one-phase smoke, no query-side attribute extraction.
+3. **GW-21 delivery zone** — the "does delivery reach me?" tool.
+4. **GW-23 circuit breaker** — graceful degradation when a dependency
+   (Supabase, OpenAI) fails.
+
+Plus **GW-24 model tiering** if it's cheap, because the cost analysis
+section of the design document needs real numbers to reason on. Not a
+gate; opportunistic.
+
+**The reasoning.** The rubric scores a finished board plus a complete
+design document over a larger unfinished one. A demo of "stock lookup
++ substitute + delivery + graceful degradation" answers the question
+"can a customer get the answer they need, and does the system fail
+sanely?" End-to-end that hangs together beats a wider surface with
+gaps. The four above are what the demonstration needs; everything
+past that is roadmap.
+
+**A different standard applies to the remaining four.** Ship the
+story, run the smoke, record the finding, move on. If a story
+surfaces a follow-up, it goes on the roadmap list — it does NOT
+become new work inside Sprint 3. The only exception is a live safety
+failure: a false `exact`, a clinical leak, an escalation that doesn't
+fire. Those still get fixed inside the sprint because they're
+present-tense risks, not future improvements.
+
+### Post-capstone roadmap — moved, not cut (2026-09-18)
+
+The following are recognised as real work worth doing, sequenced for
+after the capstone. Recording so the capstone reads as "scope was
+chosen" rather than "scope was reached".
+
+**Sprint 4-shaped features:**
+
+- **GW-26 staff console** — write path for shop staff to correct the
+  assistant's answers. Prerequisites for a supervised deploy but not
+  needed for the capstone demo. Reason: demo runs on a curated
+  golden set; no live staff correction loop needed.
+- **GW-22 tool-use disclosure** — the Article-50-adjacent surface
+  saying "this answer used tool X + Y". Article-50 disclosure lives
+  in `/api/about` already (ADR-0012). Per-answer disclosure is a UX
+  improvement, not a compliance requirement.
+- **Complement graph** — ADR-0005 named a hand-authored ~50-pair
+  graph. Sprint-4 sub-story per that ADR. GW-19 lands substitute
+  ranking without it (complement returns `unrelated` in the first
+  pass).
+- **Learned substitute/complement relationships** — McAuley co-view
+  / co-purchase per ADR-0005. Needs real traffic at scale.
+- **Price-tier ranking axis** — special-case ranking rule for
+  materially different price bands (README §3 `price-tier-
+  substitute` category). First-pass GW-19 surfaces prices; doesn't
+  sort by tier gap.
+- **Path A query-side attribute extraction** — LLM call per
+  substitute lookup to extract the query's implied primary
+  attribute rather than reading it from the top-1 corpus chunk.
+  Only justified if smoke measures a meaningful "no anchor" fall-
+  through rate under Path B.
+
+**Retrieval-quality follow-ons:**
+
+- **Reranker spike** — a proper rerank stage. Sprint-4 candidate per
+  ADR-0005 + the RRF-scale finding in ADR-0016 §3.
+- **ADR-0009 synonym dictionary** — colour codes, trade nicknames,
+  historical brand names. Case 007 (`purple horsehage`) is the live
+  motivating case, regressed under GW-20's handle-match to
+  `orderable` (safe direction). ADR-0009 is the eventual fix.
+- **Saddle-fit and girth-fit guides** — ADR-0003 addendum + Batch-3
+  Sprint-1 finding named a guide gap for fit questions. Two guides
+  would close the gap.
+- **"What we don't stock" guide** — canonical negative-claim
+  content per Batch-3 Sprint-1 finding. Turns three-state negatives
+  from "retrieval must fail cleanly" into "retrieval cites a
+  positive negative-claim chunk".
+
+**Multi-turn / conversational features:**
+
+- **GW-16 conversation memory** — multi-turn state across
+  customer messages. Dataset is single-turn today (evals/README §6.6).
+- **Multi-turn eval dataset** — companion to GW-16. Different
+  case-file shape (conversation state, follow-up handling). Sprint 2
+  named as the natural landing spot; freeze moves it out.
+
+**Ingestion / operations:**
+
+- **`products` table cleanup** — migration 001's empty `products`
+  table has no writer; ADR-0016 §1 committed to chunks-as-catalogue.
+  Either populate via ingestion or drop the schema. Cheap, but not
+  demo-critical.
+- **Lead-time capture for `orderable`** — currently opaque to the
+  customer answer. Named as a Sprint-4 candidate in ADR-0016.
+- **`price_lookup` tool** — if synthesis discipline for reading
+  prices from chunks proves loose. Named as a Sprint-4 candidate in
+  ADR-0016; no evidence of the failure yet.
+- **Trace retention rotation** — traces table has no cleanup
+  policy. GW-25 close-out named this. Real operational concern
+  post-launch; not demo-critical.
+- **Python harness preflight** — env-var + Supabase connectivity
+  check at harness startup. Nice-to-have; harness surfaces missing
+  env clearly enough today.
+
+Each item above stays visible on the board with "post-capstone"
+sequencing and a one-line reason. Nothing is deleted.
+
+### Rule change: closing the follow-up spiral
+
+Effective 2026-09-18: within the remaining four Sprint-3 stories,
+follow-ups discovered during implementation are recorded on the
+roadmap list above, not turned into new tasks. Story close-outs
+report what shipped and what got recorded — a shorter shape than
+Story 4's thirteen-task arc. The exception, as above, is a live
+safety failure surfaced during the smoke.
