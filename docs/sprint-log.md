@@ -2923,3 +2923,98 @@ above), not to the smoke.
 The tool, the schema fields, the metric, the smoke, and the
 distribution baseline all landed. The one thing missing — a
 named floor — is deferred by design.
+
+### Story 4 Option A landed — cosine floor on the pre-fusion dense score (2026-09-18)
+
+Follow-up to the Story-4 close-out (previous entry). The RRF-scale
+mismatch got a decision: **Option A**. Threshold applies to the
+dense retriever's top-1 cosine score; RRF keeps ordering + citation
+retrieval. Rejected: Option B (rerank stage — defers behind
+infrastructure that doesn't exist) and Option C (recalibrate to
+RRF + accept the overlap — that's the Moffatt false-`exact`
+exposure the whole three-state design exists to prevent).
+
+**Reasoning captured in ADR-0016 §3:** RRF scores are ordinal, not
+metric. They encode "ranked highly in both retrievers" — correct
+for ordering, useless as confidence. A rank-0 hit on a tangential
+chunk scores identically to a rank-0 hit on the correct product,
+which is why the RRF distribution overlaps completely between
+exact and non-exact. Cosine is metric and carries the thing being
+asked. No recalibration recovers the RRF signal because the
+information isn't in the score.
+
+**Implementation:**
+
+- `ProductStockLookupTool` constructor now takes a separate
+  `denseRetriever` alongside the hybrid retriever. Both run
+  concurrently on `invoke`; the hybrid owns ordering + chunk IDs,
+  the dense owns the cosine confidence score the floor applies to.
+- `apps/api/src/answer.ts::defaultAnswerDeps` passes the same
+  `PgvectorDenseRetriever` instance as both a component of the
+  hybrid and the standalone confidence source. The extra embed
+  per invocation is one OpenAI call (~10ms) — negligible.
+- Tests: `product-stock-lookup-tool.test.ts` gains three cases
+  under "dense retriever gates the confidence floor" proving the
+  gating source explicitly with divergent hybrid + dense stubs.
+  The existing 21 decision-logic tests moved to a `makeTool()`
+  helper that passes the same stub as both — fine for those
+  tests because they don't care about the fusion-vs-metric
+  distinction.
+- Smoke: `matchScore` on results now surfaces the cosine number,
+  not the RRF number. Phase-1 characterisation labels updated to
+  say cosine.
+
+**Baseline cosine distribution (2026-09-18):**
+
+```
+exact         n=4  min=0.507  median=0.560  mean=0.569  max=0.656
+                 scores: 0.507, 0.553, 0.560, 0.656
+orderable     n=8  min=0.256  median=0.486  mean=0.462  max=0.644
+                 scores: 0.256, 0.419, 0.432, 0.473, 0.486, 0.487, 0.496, 0.644
+pending       n=2  min=0.328  median=0.342  mean=0.335  max=0.342
+                 scores: 0.328, 0.342
+unavailable   n=2  min=0.240  median=0.383  mean=0.312  max=0.383
+                 scores: 0.240, 0.383
+```
+
+**Baseline validation at 0.5 cosine: 15/16 pass (up from 12/16 in
+RRF space with the same threshold and dataset).**
+
+The one remaining failure is not a threshold problem:
+
+- **product-044-western-timothy-haylage-orderable — cosine 0.644**
+  — expected orderable, tool returns exact. The corpus contains
+  HorseHage Timothy (a Timothy-species haylage NFCS does stock);
+  the query "Western Timothy Haylage" cosine-scores strongly
+  against it because both are Timothy. No threshold in [0.507,
+  0.644] separates this case from the four legitimate `exact`
+  cases in the same range — the fix is retriever-side (a rerank
+  stage that distinguishes brand from species; or a handle-match
+  check that requires the query brand to match the matched chunk's
+  `handle` before claiming exact). Named as a Sprint-4 candidate.
+
+**Threshold status: DO NOT assume 0.5 transfers just because it's
+cosine.** The distribution is above. Vix names the confirmed
+cosine floor after inspection. Until the confirmed floor is set,
+0.5 stands as the code default; nothing customer-reaching runs
+with `null`.
+
+**Pattern note — second pre-measurement threshold.**
+
+The `minMatchScore: 0.5` first specified in ADR-0016 §3 (before
+this rewrite) was chosen by intuition on cosine semantics and
+then wired to receive RRF-scale input for which 0.5 is
+architecturally wrong. This is the second time a threshold has
+been named before its input distribution was measured — after
+`confidence` in ADR-0010. Both are covered by the rule in
+`docs/ai-assisted-development.md` §"Rule that follows"
+(2026-09-15). Added a Sprint-3 entry to that file recording the
+recurrence and sharpening the rule: *check the score type
+carries metric semantics before writing a threshold — ordinal
+scores (rank fusion, rank position, top-k membership) can't be
+thresholded, only metric quantities can*. Recorded as a class
+rather than two coincidences.
+
+**Story 4 status: closed. Story now has a working default and a
+measured distribution.** The floor decision remains Vix's; the
+Western Timothy semantic-adjacency case is a Sprint-4 candidate.

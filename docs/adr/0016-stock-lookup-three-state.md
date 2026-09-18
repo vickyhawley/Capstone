@@ -272,7 +272,7 @@ not split. Sprint 4 candidate if the shape multiplies.
 (ADR-0005). This tool is single-answer per call; the loop can
 call it again with a different query if the planner disagrees.
 
-### 3. `minMatchScore`: safe provisional default, characterised at close-out
+### 3. `minMatchScore`: cosine-scale floor on the dense retriever
 
 Same "descriptive-first, threshold-second" discipline as
 ADR-0010 (intent classification) and ADR-0014 (`tool_backed_claim`):
@@ -290,31 +290,94 @@ That's exactly the false-availability failure the negative three-
 state cases (003, 008, 042) exist to catch, and a `null` default
 manufactures the failure by construction.
 
-The default is therefore:
+#### Option A — threshold on the pre-fusion dense score
 
-- **Provisional floor: `0.5`** on the hybrid retriever's RRF-
-  normalised score. Sized conservatively so that borderline
-  retrievals fall through to `orderable` (safe) rather than
-  becoming `exact` (unsafe). Not a measured number yet — this is
-  a defensive floor before we have distribution data, not the
-  final threshold.
-- **Once close-out has the distribution**, the provisional 0.5
-  is either confirmed, tightened, or (if the data justifies)
-  loosened. The measured value replaces the provisional constant
-  and lands in a code constant + `evals/thresholds/sprint-3.json`.
+The floor applies to the dense retriever's top-1 cosine score,
+NOT the hybrid retriever's RRF-fused output. RRF is kept for
+ordering + citation retrieval; the floor lives on cosine.
 
-**`null` is characterisation-only.** The smoke script may pass
-`minMatchScore: null` to record the score for every query
-regardless of match, but no path that reaches a customer ever
-uses `null`. Enforced by having the default be a constant, not
-an optional; the smoke is the only caller that overrides it.
+**Why not RRF.** Reciprocal Rank Fusion produces ordinal scores.
+The number encodes "was this ranked highly in both retrievers?"
+— which is correct information for ordering and useless as
+confidence. A rank-0 hit on a tangential chunk scores identically
+to a rank-0 hit on the correct product. That's why the distribution
+overlaps completely between exact and non-exact in RRF space (see
+sprint-log Story-4 close-out, 2026-09-17 baseline: RRF exact
+[0.032, 0.033] vs RRF orderable [0.016, 0.033], full overlap in
+[0.029, 0.033]). No recalibration recovers the signal because the
+information isn't in the score.
 
-The provisional 0.5 is deliberately conservative on the safety
+**Why cosine.** Dense cosine similarity is metric. `sim(query,
+chunk)` carries the thing the tool is actually asking: how
+semantically close is this chunk to the query. Baseline cosine
+distribution on the same 16 cases (sprint-log Story-4 close-out,
+2026-09-18):
+
+```
+exact         n=4  scores: 0.507, 0.553, 0.560, 0.656
+orderable     n=8  scores: 0.256, 0.419, 0.432, 0.473, 0.486, 0.487, 0.496, 0.644
+pending       n=2  scores: 0.328, 0.342
+unavailable   n=2  scores: 0.240, 0.383
+```
+
+The separation is real. Exact's floor is 0.507; the seven
+non-exact cases below 0.5 all pass shape validation at that
+floor. One outlier (case 044 Western Timothy Haylage at 0.644,
+expected orderable but ranked exact because the corpus contains
+HorseHage Timothy) is a semantic-adjacency finding for the
+retriever, not a threshold sizing problem — no threshold in
+[0.507, 0.644] separates these four cases from each other.
+
+#### The default
+
+- **Provisional cosine floor: `0.5`** on the dense retriever's
+  top-1 score. Baseline validation at this floor: 15/16 shape-
+  correct. Sized conservatively so borderline retrievals fall
+  through to `orderable` (safe) rather than becoming `exact`
+  (unsafe). Still not the final threshold — Vix names the
+  confirmed value at close-out based on the cosine distribution
+  above.
+- **`null` is characterisation-only.** The smoke script may pass
+  `minMatchScore: null` to record the score for every query
+  regardless of match, but no path that reaches a customer ever
+  uses `null`. Enforced by having the default be a constant, not
+  an optional; the smoke is the only caller that overrides it.
+
+The 0.5 default is deliberately conservative on the safety
 axis: false-`orderable` (system says "we can try to source"
 when we actually stock it) is a customer-inconvenience failure;
 false-`exact` (system says "in stock" when we don't stock it) is
 a promise-breaking failure. Sprint 3 tolerates the first while
 sizing the threshold to eliminate the second.
+
+#### Options B and C, considered and rejected
+
+- **Option B — normalised confidence from a reranker.** Larger
+  scope; a reranker is a Sprint 4 candidate anyway (ADR-0005
+  substitute ranking + a rerank stage). Defers behind
+  infrastructure that doesn't exist.
+- **Option C — recalibrate to RRF scale + accept the exact/
+  orderable overlap.** Accepting false-exact is the Moffatt
+  exposure this whole three-state design exists to prevent —
+  a false `exact` commits the shop to a product it can't
+  deliver. Ranked as the worse failure direction earlier in
+  this section. Rejected.
+
+#### Second pre-measurement threshold — pattern note
+
+`minMatchScore: 0.5` first landed in this ADR before the
+retriever's output scale had ever been looked at. The value
+was chosen by intuition on cosine-similarity semantics; then
+the tool was wired to receive an RRF-fused score for which
+0.5 is architecturally wrong (see Option A above). This is the
+second instance of the same shape after ADR-0010's `confidence`
+field, which was similarly specified before its distribution
+was measured and turned out to be non-load-bearing. Both are
+covered by the rule in `docs/ai-assisted-development.md`
+§"Rule that follows" (2026-09-15) — *any field a downstream
+consumer will threshold on gets a calibration check before the
+consumer is written*. Recording here so the pattern is visible
+as a class of thing, not two unrelated slips.
 
 ### 4. Entity extraction is a router-side change
 

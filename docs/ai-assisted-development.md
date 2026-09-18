@@ -502,3 +502,82 @@ the gap is worth closing, a backlog entry has to name it. Left
 in-file (no new backlog story) but noting so the pattern is
 visible: the file is where *understanding* lands, not where
 *work-to-do* lands.
+
+### Sprint 3 — 2026-09-18 — GW-20 minMatchScore pre-measurement
+
+Third instance of the pre-measurement-threshold family — after
+GW-10's `confidence` (2026-09-15, above) and the general rule that
+followed it. Recording here so the pattern is visible as a class
+rather than filed as coincidence.
+
+- **The assumption.** ADR-0016 §3 (drafted 2026-09-17) named
+  `minMatchScore: 0.5` as the tool's provisional floor. The value
+  was picked by intuition on cosine-similarity semantics — 0.5
+  reads as "moderate similarity" if you assume cosine scores in
+  [-1, 1] or [0, 1]. The default was then wired into a tool that
+  received an RRF-fused hybrid score, not a cosine score.
+- **The measurement.** GW-20's mandatory smoke ran the tool
+  against 16 golden cases with `minMatchScore: null`
+  (characterisation mode) and reported the top-1 score
+  distribution grouped by expected shape. RRF-fused scores clustered
+  in `[0.016, 0.033]` — the RRF `k=60` output range for rank-0 hits
+  never exceeds `2/k ≈ 0.033`. Every real query fell far below the
+  0.5 floor. At 0.5, every retrieval-positive case fell through to
+  `orderable` regardless of catalogue truth: 4/16 exact-expected
+  cases scored 0/4.
+- **What the field actually was.** RRF is ordinal, not metric.
+  The number encodes "was this ranked highly in both children?" —
+  useful for ordering, useless as confidence. A rank-0 hit on a
+  tangential chunk scores identically to a rank-0 hit on the
+  correct product; that's why the distribution overlaps completely
+  between `exact` and non-`exact` in RRF space. No recalibration
+  recovers the signal because it isn't in the score.
+- **Consequence.** ADR-0016 §3 rewritten with Option A: the floor
+  applies to the dense retriever's top-1 cosine score. RRF still
+  owns ordering + citation retrieval. The tool constructor takes
+  a separate `denseRetriever`; the smoke re-measured against
+  cosine and found meaningful separation
+  (`exact ∈ [0.507, 0.656]`, `orderable ∈ [0.256, 0.644]` with one
+  semantic-adjacency outlier). Baseline validation at 0.5 cosine:
+  15/16 shape-correct. One remaining failure (case 044 Western
+  Timothy at 0.644 against a HorseHage Timothy chunk) is a
+  retriever-side semantic-adjacency finding, not a threshold
+  sizing problem.
+
+#### Failure family
+
+Same shape as GW-10:
+
+- **GW-10** — model-generated `confidence` was a plausible number
+  that carried no measurable relationship to correctness.
+- **GW-20 (this entry)** — system-generated `RRF score` was a
+  legitimate number that carried an ordinal signal but not a
+  metric one. The threshold discipline assumed metric semantics
+  a score type structurally can't provide.
+
+Both plausible outputs, both look right at the interface layer,
+both fail only when a downstream consumer treats the number as
+metric and finds it isn't.
+
+The GW-10 rule already covers this class explicitly: *"This
+applies as strongly to model-generated fields (`confidence`,
+`likelihood`, `probability`) as to system-generated fields
+(retrieval scores, rerank scores)."* Rule was recorded, then
+skipped again in the ADR-0016 draft. Recording the miss so the
+next threshold specification reads back the rule before naming
+a number.
+
+#### Sharper phrasing of the rule
+
+Not just "measure before consuming" — **check the score type
+carries metric semantics before writing a threshold**. Ordinal
+(rank fusion, rank position, top-k membership) can't be
+thresholded; only metric quantities (cosine similarity,
+probability, log-likelihood, distance) can. If the fusion
+strategy is RRF, the number crossing the tool boundary is
+ordinal even though it's a float in [0, 1]; the shape lies.
+When the receiving code says `x >= threshold`, the receiving
+code is asserting metric semantics — and if the producer
+doesn't guarantee them, the assertion is a bug that will only
+surface as a mysterious accuracy hit until someone plots the
+distribution.
