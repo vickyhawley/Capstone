@@ -57,6 +57,7 @@ describe('POST /api/answer', () => {
       escalation_target: null,
     });
     expect(body['adversarial_pattern']).toBeNull();
+    expect(body['product_query']).toBeNull();
   });
 
   it('welfare-clinical intent → escalate to vet, answer holds vet copy', async () => {
@@ -126,6 +127,27 @@ describe('POST /api/answer', () => {
     expect(body['adversarial_suspected']).toBe(true);
     expect(body['adversarial_pattern']).toBe('adversarial:ignore-previous-instructions');
     expect(body['behavior']).toBe('answer');
+  });
+
+  it('product + router-extracted productQuery → surfaces as product_query in response', async () => {
+    const app = createAnswerRoute(
+      makeDeps({
+        async route() {
+          return {
+            intent: 'product',
+            confidence: 1.0,
+            rationale: 'test',
+            matched: 'rule',
+            adversarialSuspected: false,
+            productQuery: 'wormers',
+          };
+        },
+      }),
+    );
+    const res = await post(app, { query: 'do you sell wormers' });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['intent']).toBe('product');
+    expect(body['product_query']).toBe('wormers');
   });
 
   it('rejects missing `query` with a 400', async () => {

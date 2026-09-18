@@ -201,6 +201,56 @@ def intent_classification_accuracy(case: EvalCase, response: ApiResponse) -> Met
     return MetricResult(0.0, f"predicted={response.intent} actual={case.intent}")
 
 
+# ---------- product query extraction accuracy (GW-20, ADR-0016 §4) ----------
+
+
+def _normalise_product_query(s: str) -> str:
+    """Lowercase, collapse internal whitespace, strip. Used for the
+    extraction accuracy comparison so casing and spacing don't drive
+    false negatives — the router's job is entity coverage, not
+    canonicalisation."""
+    return " ".join(s.lower().split())
+
+
+def product_query_extraction_accuracy(case: EvalCase, response: ApiResponse) -> MetricResult:
+    """1.0 iff the router-extracted `product_query` matches
+    `case.expected_product_query` after normalisation, else 0.0.
+
+    Descriptive-first per ADR-0010 amendment 3 / ADR-0016 §4 —
+    reports the current shape of extraction so we can name a floor
+    once we've seen the baseline. Not gated by a threshold in the
+    runner yet.
+
+    Applicable only when the case declares an expected extraction
+    (product-intent cases with unambiguous shape; see
+    evals/datasets/README.md §1 `expected_product_query`). Non-
+    product cases and product cases whose shape is ambiguous score
+    n/a and don't contribute to the aggregate.
+
+    Comparison is case-insensitive with whitespace normalisation —
+    the router's job is to identify the entity span, not to
+    canonicalise casing. If canonicalisation matters later (for
+    catalogue lookup), that's a separate metric on a downstream
+    stage.
+
+    A response missing the field is a real failure (score 0.0,
+    applicable=True) when the case expected an extraction. The
+    router's job is to populate `product_query` for the cases the
+    dataset asserts are extractable; silence isn't neutral.
+    """
+    if case.expected_product_query is None:
+        return MetricResult(0.0, "n/a — case has no expected_product_query", applicable=False)
+    if response.product_query is None:
+        return MetricResult(0.0, f"router extracted nothing; expected {case.expected_product_query!r}")
+    got = _normalise_product_query(response.product_query)
+    want = _normalise_product_query(case.expected_product_query)
+    if got == want:
+        return MetricResult(1.0, f"correct: {response.product_query!r}")
+    return MetricResult(
+        0.0, f"extracted={response.product_query!r} expected={case.expected_product_query!r}"
+    )
+
+
 # ---------- no prohibited claims (GW-12) ----------
 
 
@@ -269,6 +319,7 @@ METRICS = {
     "intent_classification_accuracy": intent_classification_accuracy,
     "correct_behavior_dispatch": correct_behavior_dispatch,
     "no_prohibited_claims": no_prohibited_claims,
+    "product_query_extraction_accuracy": product_query_extraction_accuracy,
 }
 
 
@@ -295,6 +346,7 @@ HIGHER_IS_BETTER = {
     "intent_classification_accuracy": True,
     "correct_behavior_dispatch": True,
     "no_prohibited_claims": True,
+    "product_query_extraction_accuracy": True,
 }
 
 

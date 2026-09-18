@@ -18,11 +18,16 @@
  */
 
 import {
+  HybridRetriever,
   HybridRouter,
   NoopPlanner,
+  PgTsRankRetriever,
+  PgvectorDenseRetriever,
+  ProductStockLookupTool,
   RulesSafetyGate,
-  StubToolRegistry,
   SupabaseTraceSink,
+  loadStatusOverrideList,
+  rrf,
 } from '@groundwork/adapters';
 import type {
   Behaviour,
@@ -53,6 +58,7 @@ interface AnswerResponseBody {
   readonly intent: string;
   readonly adversarial_suspected: boolean;
   readonly adversarial_pattern: string | null;
+  readonly product_query: string | null;
   readonly behavior: 'answer' | 'abstain' | 'escalate';
   readonly escalation_target: string | null;
   readonly tool_calls: readonly ToolCallSummary[];
@@ -147,6 +153,7 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
       intent: decision.intent,
       adversarial_suspected: decision.adversarialSuspected,
       adversarial_pattern: decision.adversarialPattern ?? null,
+      product_query: decision.productQuery ?? null,
       behavior: behaviour.kind,
       escalation_target: escalationTargetOf(behaviour),
       tool_calls: toolCalls,
@@ -176,11 +183,21 @@ function generateTraceId(): string {
  * from `server.ts` at request-scope so a missing env var produces a
  * 500 on the first hit rather than an import-time crash.
  *
+ * Async because GW-20 (ProductStockLookupTool) reads two YAML files
+ * at startup — `data/nfcs-out-of-scope.yaml` (permanent brand
+ * won't-stock) and `data/nfcs-pending.yaml` (temporary pre-condition
+ * override). Loaded once at composition-root per ADR-0016 §"loader
+ * pattern"; a corrupt file surfaces at deps-build time rather than
+ * on the first customer request. The YAML paths default to the
+ * repo-root data/ directory but can be overridden via
+ * `STOCK_LOOKUP_OUT_OF_SCOPE_PATH` and `STOCK_LOOKUP_PENDING_PATH`
+ * for deployment layouts that put data elsewhere.
+ *
  * Sprint 3 (GW-25) added Supabase requirements — the trace sink
  * writes to the `traces` table. Router still needs OpenAI. Both
  * are checked up front; a missing var fails cleanly.
  */
-export function defaultAnswerDeps(): AnswerDeps {
+export async function defaultAnswerDeps(): Promise<AnswerDeps> {
   const openaiKey = process.env['OPENAI_API_KEY'];
   if (!openaiKey) {
     throw new Error('OPENAI_API_KEY is required for /api/answer');
@@ -196,11 +213,30 @@ export function defaultAnswerDeps(): AnswerDeps {
   const supabase = createClient(supabaseUrl, supabaseKey, {
     auth: { persistSession: false },
   });
+
+  // GW-20: real tool registry, replacing StubToolRegistry. The tool
+  // needs a hybrid retriever (dense + sparse) so it can look up the
+  // product corpus, plus both override YAML files. `null` minMatchScore
+  // is not passed to the tool from this path — the tool's default
+  // (ADR-0016 §3) applies to every customer-reaching call. Only the
+  // smoke script sets `null` for characterisation.
+  const dense = new PgvectorDenseRetriever(supabase, openai);
+  const sparse = new PgTsRankRetriever(supabase);
+  const retriever = new HybridRetriever(dense, sparse, rrf());
+  const outOfScopePath =
+    process.env['STOCK_LOOKUP_OUT_OF_SCOPE_PATH'] ?? 'data/nfcs-out-of-scope.yaml';
+  const pendingPath = process.env['STOCK_LOOKUP_PENDING_PATH'] ?? 'data/nfcs-pending.yaml';
+  const [outOfScope, pending] = await Promise.all([
+    loadStatusOverrideList(outOfScopePath),
+    loadStatusOverrideList(pendingPath),
+  ]);
+  const toolRegistry = new ProductStockLookupTool(retriever, outOfScope, pending);
+
   return {
     router: new HybridRouter(openai),
     safetyGate: new RulesSafetyGate(),
     planner: new NoopPlanner(),
-    toolRegistry: new StubToolRegistry(),
+    toolRegistry,
     traceSink: new SupabaseTraceSink(supabase),
   };
 }

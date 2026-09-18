@@ -27,15 +27,35 @@ ExpectedBehavior = Literal["answer", "abstain", "escalate"]
 Behavior = ExpectedBehavior  # alias — the API returns the same 3-value set
 EscalationTarget = Literal["vet", "staff-service", "staff-order"]
 
+# Four states (ADR-0016 §2, after the 2026-09-17 SME correction). The
+# `three-state-stock` case tag pre-dates the fourth state and is kept
+# stable per §1's "Never rename a case ID" rule — the tag name is a
+# historical label for the case category; the field values below are
+# the current source of truth on shape.
+StockStatus = Literal["exact", "orderable", "pending", "unavailable"]
+
 
 class EvalCase(BaseModel):
     """A single labelled case in an eval dataset.
 
     `tags` is an open-ended list for cross-cutting case categories
     that don't map to a single intent — e.g. `three-state-stock`
-    (in-catalogue vs orderable vs unavailable) or `source-contradiction`
-    (corpus contains disagreeing information). Captured but not
-    sliced by the runner today; see evals/datasets/README.md §3.
+    (in-catalogue vs orderable vs pending vs unavailable) or
+    `source-contradiction` (corpus contains disagreeing information).
+    Captured but not sliced by the runner today; see
+    evals/datasets/README.md §3.
+
+    Product-intent fields (ADR-0016, added Sprint 3 Story 4):
+    - `expected_stock_status` — one of four states. Consumed by the
+      Story 4 smoke and by the metric that verifies the tool's
+      decision. Optional so non-product cases and any product case
+      whose shape is ambiguous (e.g. pending SME follow-up) can
+      leave it null. Populated for every case whose shape is
+      unambiguous.
+    - `expected_product_query` — the entity the router is expected
+      to extract for this case's user_input. Consumed by
+      `product_query_extraction_accuracy` (ADR-0010 amendment 3 /
+      ADR-0016 §4). Optional for the same reasons.
     """
 
     id: str
@@ -46,6 +66,8 @@ class EvalCase(BaseModel):
     prohibited_claims: list[str] = Field(default_factory=list)
     provenance: str
     tags: list[str] = Field(default_factory=list)
+    expected_stock_status: StockStatus | None = None
+    expected_product_query: str | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -83,6 +105,14 @@ class ApiResponse(BaseModel):
       responses still validate.
     - `escalation_target` is populated iff `behavior == 'escalate'`.
       Names the target audience for the escalation copy (GW-12).
+
+    Router extraction field (added Sprint 3, GW-20, per ADR-0010
+    amendment 3 and ADR-0016 §4):
+    - `product_query` is the entity string the router extracted from
+      the user's message for `intent == 'product'` cases. Optional
+      — absent when the query is non-product, compound, or ambiguous,
+      per the ADR-0010 amendment. Consumed by
+      `product_query_extraction_accuracy`.
     """
 
     answer: str = ""
@@ -97,6 +127,8 @@ class ApiResponse(BaseModel):
 
     behavior: Behavior | None = None
     escalation_target: EscalationTarget | None = None
+
+    product_query: str | None = None
 
     model_config = {"extra": "ignore"}
 

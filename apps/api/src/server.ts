@@ -1,4 +1,4 @@
-import { NoopPlanner, RulesSafetyGate, StubToolRegistry } from '@groundwork/adapters';
+import { NoopPlanner, RulesSafetyGate } from '@groundwork/adapters';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { createAboutRoute } from './about.js';
@@ -13,10 +13,14 @@ import {
 const limiter = createRedisRateLimiter();
 assertLimiterOrFail(limiter);
 
-let answerDepsCache: ReturnType<typeof defaultAnswerDeps> | null = null;
+// `defaultAnswerDeps` is async since GW-20 (ProductStockLookupTool)
+// loads two YAML files at startup. Cache the promise so concurrent
+// first-hit requests all await the same resolution rather than
+// racing to build competing dep sets.
+let answerDepsPromise: ReturnType<typeof defaultAnswerDeps> | null = null;
 function getAnswerDeps() {
-  answerDepsCache ??= defaultAnswerDeps();
-  return answerDepsCache;
+  answerDepsPromise ??= defaultAnswerDeps();
+  return answerDepsPromise;
 }
 
 export const app = new Hono();
@@ -78,32 +82,43 @@ app.get('/api/stream/demo', (c) => {
 // Public info; rides the shared rate-limit middleware.
 app.route('/api/about', createAboutRoute());
 
-// POST /api/answer — Sprint 3 shape (GW-10, GW-11, GW-12, GW-18, GW-25 landed).
-// Route is registered once; env-dependent deps are built lazily on
-// first request inside their proxies so a missing var produces a 500
-// with a clear message rather than an import-time crash the deploy
-// log buries. The router needs OPENAI_API_KEY; the SupabaseTraceSink
-// (GW-25) needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY.
-// Non-env-dependent deps are built once eagerly. Tool loop (GW-18)
-// uses NoopPlanner + StubToolRegistry until GW-20/21/22 register real
-// tools + GW-24 wires a real planner.
+// POST /api/answer — Sprint 3 shape (GW-10, GW-11, GW-12, GW-18,
+// GW-20, GW-25 landed). Route is registered once; env-dependent and
+// I/O-dependent deps are built lazily on first request inside their
+// proxies so a missing var or corrupt YAML surfaces as a 500 with a
+// clear message rather than an import-time crash the deploy log
+// buries. The router needs OPENAI_API_KEY; the SupabaseTraceSink
+// (GW-25) needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY;
+// ProductStockLookupTool (GW-20) loads two YAML files at startup.
+// Non-env-dependent deps are built once eagerly.
 const eagerSafetyGate = new RulesSafetyGate();
 const eagerPlanner = new NoopPlanner();
-const eagerToolRegistry = new StubToolRegistry();
 app.route(
   '/api/answer',
   createAnswerRoute({
     router: {
       async route(query) {
-        return getAnswerDeps().router.route(query);
+        return (await getAnswerDeps()).router.route(query);
       },
     },
     safetyGate: eagerSafetyGate,
     planner: eagerPlanner,
-    toolRegistry: eagerToolRegistry,
+    toolRegistry: {
+      // `list()` on the ToolRegistry port is synchronous and is not
+      // yet called from any code path (as of Sprint 3 Story 4). When
+      // a real planner starts consuming it (GW-24), the composition
+      // root will need to await deps up front — return [] here so
+      // the proxy honours the interface contract meanwhile.
+      list() {
+        return [];
+      },
+      async invoke(call, signal) {
+        return (await getAnswerDeps()).toolRegistry.invoke(call, signal);
+      },
+    },
     traceSink: {
       async record(span) {
-        return getAnswerDeps().traceSink.record(span);
+        return (await getAnswerDeps()).traceSink.record(span);
       },
     },
   }),

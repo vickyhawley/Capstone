@@ -81,7 +81,7 @@ describe('ProductStockLookupTool', () => {
     });
   });
 
-  describe('invoke() — three-state decision (ADR-0016 §2)', () => {
+  describe('invoke() — four-state decision (ADR-0016 §2)', () => {
     it('returns EXACT when retriever returns a chunk at/above the threshold', async () => {
       const tool = new ProductStockLookupTool(
         makeRetriever([

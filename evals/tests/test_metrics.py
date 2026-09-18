@@ -8,6 +8,7 @@ from groundwork_evals.metrics import (
     groundedness,
     intent_classification_accuracy,
     no_prohibited_claims,
+    product_query_extraction_accuracy,
     recall_at_k,
     retrieval_relevance,
 )
@@ -444,3 +445,60 @@ def test_no_prohibited_claims_passes_when_answer_empty_but_claims_declared():
     r = no_prohibited_claims(case, resp)
     assert r.score == 1.0
     assert r.applicable is True
+
+
+# ---------- product_query_extraction_accuracy (GW-20, ADR-0016 §4) ----------
+
+
+def test_extraction_accuracy_exact_match():
+    case = _answer_case(expected_product_query="wormers")
+    resp = ApiResponse(product_query="wormers")
+    r = product_query_extraction_accuracy(case, resp)
+    assert r.score == 1.0
+    assert r.applicable is True
+
+
+def test_extraction_accuracy_case_insensitive():
+    case = _answer_case(expected_product_query="LeMieux")
+    resp = ApiResponse(product_query="lemieux")
+    r = product_query_extraction_accuracy(case, resp)
+    assert r.score == 1.0
+
+
+def test_extraction_accuracy_whitespace_normalised():
+    case = _answer_case(expected_product_query="molichaff hoofkind")
+    resp = ApiResponse(product_query="  molichaff   hoofkind ")
+    r = product_query_extraction_accuracy(case, resp)
+    assert r.score == 1.0
+
+
+def test_extraction_accuracy_wrong_extraction_scores_zero():
+    case = _answer_case(expected_product_query="Ariat")
+    resp = ApiResponse(product_query="lemieux")
+    r = product_query_extraction_accuracy(case, resp)
+    assert r.score == 0.0
+    assert r.applicable is True
+    assert "'lemieux'" in r.reason
+    assert "'Ariat'" in r.reason
+
+
+def test_extraction_accuracy_missing_extraction_is_real_failure():
+    # Router silence when the case expected an extraction is not
+    # neutral — the router's job is to populate the field for cases
+    # the dataset asserts are extractable.
+    case = _answer_case(expected_product_query="wormers")
+    resp = ApiResponse(product_query=None)
+    r = product_query_extraction_accuracy(case, resp)
+    assert r.score == 0.0
+    assert r.applicable is True
+    assert "router extracted nothing" in r.reason
+
+
+def test_extraction_accuracy_no_expected_is_not_applicable():
+    # Non-product cases and product cases with ambiguous shape score
+    # n/a — the aggregate ignores them so the metric measures only
+    # what the dataset asserts.
+    case = _answer_case()  # no expected_product_query
+    resp = ApiResponse(product_query="anything")
+    r = product_query_extraction_accuracy(case, resp)
+    assert r.applicable is False
