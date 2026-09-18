@@ -58,12 +58,17 @@ import type {
 import { parse as parseYaml } from 'yaml';
 
 /**
- * Default `minMatchScore` — provisional per ADR-0016 §3. Conservative
- * on the safety axis: false-orderable ("we can source that") is a
- * customer-inconvenience failure; false-exact ("in stock") is a
- * promise-breaking failure. This floor tolerates the first while
- * defending against the second. Sprint 3 close-out either confirms,
- * tightens, or (if data justifies) loosens.
+ * Default `minMatchScore` — cosine-similarity scale, applied to the
+ * top-1 result from the dense retriever (NOT the RRF-fused hybrid
+ * output). See ADR-0016 §3 for the rationale — RRF scores are
+ * ordinal and don't separate exact from orderable; cosine is metric
+ * and carries the confidence signal.
+ *
+ * Value 0.5 is provisional pending the Story-4 cosine-space
+ * characterisation. Conservative on the safety axis: false-orderable
+ * ("we can source that") is a customer-inconvenience failure;
+ * false-exact ("in stock") is a promise-breaking failure. This floor
+ * tolerates the first while defending against the second.
  */
 export const DEFAULT_MIN_MATCH_SCORE = 0.5;
 
@@ -149,8 +154,25 @@ export class ProductStockLookupTool implements ToolRegistry {
     },
   };
 
+  /**
+   * @param retriever       Ordered chunk source — typically a
+   *   `HybridRetriever` composing dense + sparse via RRF. Owns
+   *   ordering and citation retrieval. Its top-1 score is NOT read
+   *   for confidence gating (RRF is ordinal; see ADR-0016 §3).
+   * @param denseRetriever  Confidence-signal source — typically the
+   *   same `PgvectorDenseRetriever` that feeds `retriever`. Its
+   *   top-1 cosine score is compared against `minMatchScore`. In
+   *   production the two retrievers share an OpenAI client so the
+   *   duplicate embed call is server-side cached; in tests, callers
+   *   can pass the same stub for both.
+   * @param outOfScope      Permanent brand won't-stock overrides
+   *   (`data/nfcs-out-of-scope.yaml`).
+   * @param pending         Temporary pre-condition overrides
+   *   (`data/nfcs-pending.yaml`).
+   */
   constructor(
     private readonly retriever: Retriever,
+    private readonly denseRetriever: Retriever,
     private readonly outOfScope: readonly StatusOverrideEntry[],
     private readonly pending: readonly StatusOverrideEntry[] = [],
   ) {}
@@ -179,23 +201,37 @@ export class ProductStockLookupTool implements ToolRegistry {
     // the safe default. See ADR-0016 §3.
     const effectiveMinScore = minMatchScore === undefined ? DEFAULT_MIN_MATCH_SCORE : minMatchScore;
 
-    // Retrieval — filtered to product-type chunks. The retriever port
-    // takes filters as scalar/bool records; content_type is a scalar
-    // string on the underlying documents row.
-    const matches = await this.retriever.retrieve({
-      text: productQuery,
-      topK: RETRIEVAL_TOP_K,
-      filters: { content_type: 'product' },
-    });
+    // Retrieval — filtered to product-type chunks. Two concurrent
+    // calls: the hybrid retriever owns ordering + chunk IDs, the
+    // dense retriever supplies the top-1 cosine score for the
+    // confidence floor. RRF scores are ordinal and can't gate
+    // confidence (ADR-0016 §3); cosine is the metric signal.
+    const [matches, denseMatches] = await Promise.all([
+      this.retriever.retrieve({
+        text: productQuery,
+        topK: RETRIEVAL_TOP_K,
+        filters: { content_type: 'product' },
+      }),
+      this.denseRetriever.retrieve({
+        text: productQuery,
+        topK: 1,
+        filters: { content_type: 'product' },
+      }),
+    ]);
     if (signal?.aborted) {
       return { ok: false, error: 'aborted before result assembly', retryable: true };
     }
 
-    const topScore = matches[0]?.score ?? null;
+    // `matchScore` on the result is the cosine confidence — the
+    // number the floor is applied against. Callers surfacing scores
+    // for observability see cosine, not RRF, which is what the
+    // threshold discipline in ADR-0016 §3 requires.
+    const topScore = denseMatches[0]?.score ?? null;
     const passesFloor =
       matches.length > 0 &&
       matches[0] !== undefined &&
-      (effectiveMinScore === null || matches[0].score >= effectiveMinScore);
+      topScore !== null &&
+      (effectiveMinScore === null || topScore >= effectiveMinScore);
 
     if (passesFloor && matches[0]) {
       const top = matches[0];
@@ -208,7 +244,7 @@ export class ProductStockLookupTool implements ToolRegistry {
         matchedTitle: readStringMetadata(top.metadata, 'title'),
         outOfScopeReason: null,
         pendingReason: null,
-        matchScore: top.score,
+        matchScore: topScore,
       };
       return { ok: true, value };
     }

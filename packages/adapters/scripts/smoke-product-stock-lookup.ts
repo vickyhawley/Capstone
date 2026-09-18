@@ -155,9 +155,11 @@ function verifyShape(expected: StockStatus, result: StockLookupResult): readonly
 }
 
 function reportDistribution(results: readonly CaseResult[]): void {
-  console.log('\n=== Match-score distribution (characterisation mode — minMatchScore: null) ===');
-  console.log('Reported first, before pass/fail, per user instruction — the ');
-  console.log('threshold is named after inspection, not before.\n');
+  console.log('\n=== Cosine-score distribution (dense top-1, minMatchScore: null) ===');
+  console.log("ADR-0016 §3 Option A: the floor applies to the dense retriever's");
+  console.log('top-1 cosine score, not the RRF-fused hybrid output. Reported');
+  console.log('first, before pass/fail, per user instruction — the threshold is');
+  console.log('named after inspection, not before.\n');
 
   const byStatus = new Map<StockStatus, number[]>();
   for (const r of results) {
@@ -184,10 +186,11 @@ function reportDistribution(results: readonly CaseResult[]): void {
     console.log(`               scores: ${scores.map(fmt).join(', ')}`);
   }
   console.log('');
-  console.log('Threshold sizing — the ADR-0016 §3 provisional floor is 0.5.');
-  console.log('Vix names the confirmed floor at Story 4 close-out based on the');
+  console.log('Threshold sizing — the ADR-0016 §3 provisional cosine floor is 0.5.');
+  console.log('Vix names the confirmed floor at close-out based on the cosine');
   console.log("distribution above (a floor safely below any 'exact' score but");
-  console.log("safely above any non-'exact' score is the target).");
+  console.log("safely above any non-'exact' score is the target). Do NOT assume");
+  console.log('0.5 transfers just because it is cosine — measure, then name.');
 }
 
 function fmt(x: number | undefined): string {
@@ -217,7 +220,9 @@ async function main(): Promise<void> {
   console.log(`Loaded ${cases.length} smoke cases with expected_stock_status.`);
   console.log(`Out-of-scope entries: ${outOfScope.length}. Pending entries: ${pending.length}.\n`);
 
-  const tool = new ProductStockLookupTool(retriever, outOfScope, pending);
+  // ADR-0016 §3 Option A: floor applies to the dense retriever's
+  // top-1 cosine score, not the RRF-fused hybrid output. Pass both.
+  const tool = new ProductStockLookupTool(retriever, dense, outOfScope, pending);
 
   // -------------------------------------------------------------------
   // Phase 1 — Characterisation (minMatchScore: null → no floor).
@@ -225,8 +230,11 @@ async function main(): Promise<void> {
   // Every retrieval hit becomes `exact` regardless of score in this
   // phase, because `null` means "return the top-1 result as exact if
   // one exists". So the returned status is not shape-verified here —
-  // the whole point is to collect the top-1 match score per case so
-  // Vix can see the distribution and name the floor at close-out.
+  // the whole point is to collect the top-1 cosine score per case
+  // (from the dense retriever, since ADR-0016 §3 Option A applies
+  // the floor there) so Vix can see the distribution and name the
+  // cosine floor at close-out. `matchScore` on the result surfaces
+  // the cosine number, not the RRF-fused score.
   // -------------------------------------------------------------------
   const characterisation: CaseResult[] = [];
   for (const c of cases) {
@@ -275,7 +283,7 @@ async function main(): Promise<void> {
   // decides the status. The smoke's exit code is driven by this phase.
   // -------------------------------------------------------------------
   console.log(
-    '\n\n=== Phase 2 — Shape validation @ tool default (DEFAULT_MIN_MATCH_SCORE = 0.5) ===\n',
+    '\n\n=== Phase 2 — Shape validation @ cosine floor (DEFAULT_MIN_MATCH_SCORE = 0.5) ===\n',
   );
   const validation: CaseResult[] = [];
   for (const c of cases) {

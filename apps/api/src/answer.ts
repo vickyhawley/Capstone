@@ -215,11 +215,16 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
   });
 
   // GW-20: real tool registry, replacing StubToolRegistry. The tool
-  // needs a hybrid retriever (dense + sparse) so it can look up the
-  // product corpus, plus both override YAML files. `null` minMatchScore
-  // is not passed to the tool from this path — the tool's default
-  // (ADR-0016 §3) applies to every customer-reaching call. Only the
-  // smoke script sets `null` for characterisation.
+  // takes two retrievers per ADR-0016 §3 Option A: the hybrid
+  // retriever owns ordering + chunk IDs; the dense retriever owns
+  // the cosine confidence score the floor is applied against. RRF is
+  // ordinal (rank-0 on a tangential chunk scores identically to
+  // rank-0 on the correct product), so the floor lives on the metric
+  // signal, not the fused output. The two share an OpenAI client, so
+  // the extra embed call per invocation is a small cost.
+  // `null` minMatchScore is not passed from this path — the tool's
+  // default (ADR-0016 §3) applies to every customer-reaching call.
+  // Only the smoke script sets `null` for characterisation.
   const dense = new PgvectorDenseRetriever(supabase, openai);
   const sparse = new PgTsRankRetriever(supabase);
   const retriever = new HybridRetriever(dense, sparse, rrf());
@@ -230,7 +235,7 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
     loadStatusOverrideList(outOfScopePath),
     loadStatusOverrideList(pendingPath),
   ]);
-  const toolRegistry = new ProductStockLookupTool(retriever, outOfScope, pending);
+  const toolRegistry = new ProductStockLookupTool(retriever, dense, outOfScope, pending);
 
   return {
     router: new HybridRouter(openai),
