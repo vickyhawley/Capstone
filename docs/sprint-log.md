@@ -3371,3 +3371,33 @@ suite 107 (was 102, +5 for substitute metric).
 
 **Sprint 3 remaining:** GW-21 delivery zone; GW-23 circuit
 breaker. GW-24 model tiering opportunistically.
+
+### Audit — metadata hydration fix vs Story 4's closed numbers (2026-09-18)
+
+GW-19 fixed `PgvectorDenseRetriever` to hydrate `metadata` via a
+follow-up SELECT. That happened after Story 4's baseline numbers
+were closed; the audit question was whether the numbers stand.
+
+Result: **cleared. Nothing scored in Story 4's baseline depended on
+hydrated metadata.** Traced the decision path:
+
+- `matchScore` = dense top-1 cosine score. Metadata-independent.
+- `passesFloor` = topScore >= 0.5. Metadata-independent.
+- `tokensGrounded` = `matchesQueryTokens(productQuery, matches[0])`.
+  Reads `handle` + `title` + `text` into the haystack. Under null
+  metadata, degrades to `text` alone. Every product chunk's `text`
+  begins with a header line (`# HorseHage Timothy`, `# Molichaff
+  Hoofkind`, etc.) that includes the handle/title tokens as a
+  substring. So the check produced identical PASS/FAIL outcomes
+  with or without hydration for all 16 smoke cases.
+- `outOfScopeReason` / `pendingReason` — from YAML overrides,
+  metadata-independent.
+- `matchedHandle` / `matchedTitle` — output-only fields; the smoke
+  didn't assert on them, so the "15/16 pass" tally is unaffected
+  by whether they were silently null.
+
+No re-run needed. Cosine distribution, 0.5 floor confirmation,
+case-044 handle-match analysis, and the 15/16 baseline all stand.
+The hydration fix is a purely additive quality improvement —
+`matchedHandle`/`matchedTitle` now surface correctly on the API
+response for downstream synthesis, but no closed number moved.
