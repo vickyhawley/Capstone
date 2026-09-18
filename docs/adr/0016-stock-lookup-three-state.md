@@ -405,6 +405,135 @@ consumer will threshold on gets a calibration check before the
 consumer is written*. Recording here so the pattern is visible
 as a class of thing, not two unrelated slips.
 
+### 3.5. Handle-match check — grounding `exact` beyond cosine
+
+Cosine similarity finds semantically-adjacent chunks: same
+species, same category, same product type. That's what it
+should do — it's what the "purple horsehage" trade-synonym case
+depends on. But two Timothy haylages from different brands are
+semantically close and commercially distinct, and cosine cannot
+see the distinction because the information isn't semantic.
+Case 044 (Western Timothy Haylage) at cosine `0.644` against a
+HorseHage Timothy chunk is the live instance.
+
+**The rule.** Before returning `exact`, every content token
+from the query must appear as a substring of the matched
+chunk's `handle`, `title`, or `text` (concatenated, case-
+insensitive). Word order does not matter — grounding is on
+presence, not sequence.
+
+Content tokens are: lowercased; split on whitespace, hyphens,
+underscores, and common punctuation; filtered to length ≥ 3
+and not in the stopword list. Stopwords capture four classes
+of shop-question boilerplate:
+
+1. Grammar (articles, prepositions, conjunctions, pronouns,
+   auxiliary verbs).
+2. Shop-question framing (`sell`, `stock`, `carry`, `get`,
+   `order`, `need`, `want`, `buy`, `purchase`).
+3. Social filler (`please`, `hello`, `hey`, `thanks`,
+   `cheers`).
+4. Fragments (`yes`, `yeah`, `yep`, `nope`).
+
+The list is English-only, shop-domain-tuned, hard-coded in the
+tool file — no runtime dependency, no locale concern, and no
+temptation for a different caller to grab it and apply it in a
+different context.
+
+**Empty-content edge case.** A pathological query with zero
+content tokens after filtering (e.g. just `"hi please"`) skips
+the check and returns `true`. The retrieval already found
+something, the tool has no better signal to gate on, and in
+practice the router won't emit a productQuery for such an
+utterance.
+
+#### Why "every token" rather than a percentage or leading-token rule
+
+Percentage-based rules privilege word order in a way customer
+queries don't — `"Timothy Western Haylage"` and `"haylage,
+western timothy"` should behave identically, but a
+leading-plus-half rule treats the first token as special. And
+a 50%-of-remainder rule has a hole: for a two-token query, a
+grounded first token plus zero grounded remainder passes,
+which means `"Molichaff Alfalfa"` matches a Molichaff Hoofkind
+chunk (leading Molichaff grounds; Alfalfa is remainder-of-1,
+50% of which is zero-required). That's the same failure
+direction the check exists to prevent.
+
+Every-token-grounded is stricter. Word order stops mattering.
+The stricter direction is `orderable` (safe), and the smoke
+measures how often that fires; loosen only if real `exact`
+cases start dropping and the loss can't be attributed to a
+different limitation below.
+
+#### What this catches
+
+Baseline (2026-09-18) — Phase 2 shape validation, 15/16 pass:
+
+- **Case 044 Western Timothy Haylage** — previously false-
+  `exact` at cosine `0.644` against a HorseHage Timothy chunk.
+  Now correctly `orderable`: `western` is not present in the
+  chunk, rule fails, fall-through.
+- **Every future "brand-A species-X" vs "brand-B species-X"
+  query** in the same shape.
+- **Variant mismatches** — a customer asking for `"Molichaff
+  Alfalfa"` against a Molichaff Hoofkind chunk: `alfalfa` is
+  not present, rule fails, fall-through.
+
+#### What this does NOT catch — named limitations
+
+1. **Typos.** Substring-match on tokens catches some typos by
+   accident (truncation like `"molichaf"` is a substring of
+   `"molichaff"` so still passes) and misses others cleanly
+   (mid-word substitution like `"moliehaff"` doesn't ground).
+   NFCS traffic contains plenty of typos (`"delievered"`,
+   `"museli"`, `"noaule"`); a fuzzy/edit-distance match is the
+   eventual answer, not a reason to weaken the rule now.
+   Regression direction: `orderable` (safe).
+
+2. **Trade-synonym queries.** When the customer uses a
+   colour-code or historical brand name the corpus doesn't use
+   (`"purple horsehage"` ↔ `"HorseHage Timothy"`), the query
+   token doesn't ground. The check fails, the case regresses
+   to `orderable`. ADR-0009 (synonym dictionary — Timothy /
+   Ryegrass / High Fibre / colour codes) is where this class
+   is fixed properly. Live regression in the 2026-09-18
+   baseline: **case 007 `purple horsehage` flipped from
+   `exact` at cosine `0.553` to `orderable`** — same shape as
+   the ADR-0009 motivating case (case 007 is named in the
+   ADR-0009 rationale). Regression direction: `orderable`
+   (safe).
+
+3. **Brand-name-in-unrelated-product.** If the query includes
+   a token that happens to appear in a different product's
+   text (e.g. a chunk that name-drops another brand for
+   comparison, or a chunk that shares a species token like
+   `"timothy"` with the query), the token grounds even though
+   the product identity is wrong. Would need brand-specific
+   attribute extraction (candidate for ADR-0004 attribute
+   extraction) to catch.
+
+4. **Corpus without the query brand at all.** If the shop has
+   never listed `Brand X` and the customer asks for `"Brand X
+   product"`, the check correctly fails. But if the shop also
+   doesn't offer to source it (say `Brand X` is out-of-scope),
+   the fall-through hits the out-of-scope list, not the
+   check's exit path. The check works with the four-state
+   ordering in §2 — it doesn't replace it.
+
+#### Verification
+
+Regression tested against the 2026-09-18 baseline via the smoke
+(15/16 shape-correct). The one shift from the pre-check
+baseline: **case 007 moved from correctly-`exact` to
+incorrectly-`orderable`**, offset by **case 044 moving from
+incorrectly-`exact` to correctly-`orderable`**. Same headline
+number; failure direction flipped from unsafe to safe. Recorded
+as the expected outcome given the corpus evidence — HorseHage
+Timothy chunk contains zero occurrences of the word "purple"
+(direct query against Supabase, 2026-09-18, chunk id
+`ec43a939-9f04-5071-4792-70f6e635991a`).
+
 ### 4. Entity extraction is a router-side change
 
 `RouterDecision` gains an optional field:

@@ -3059,3 +3059,99 @@ substitute case wearing a failure's clothes — the honest answer is
 "we don't stock Western Timothy Haylage, but we have HorseHage
 Timothy". Building GW-19 turns the case from a failure into the
 canonical demonstration of the pattern. Design pending.
+
+### Handle-match check landed — case 044 fixed, case 007 named as trade-synonym limitation (2026-09-18)
+
+Follow-on to Story 4 close. The false-`exact` on case 044 (Western
+Timothy Haylage against HorseHage Timothy chunk) is a live instance
+of the failure the three-state design exists to prevent, and it's
+smaller to fix than a reranker. Design approved with two changes
+against my proposal: strict every-token-grounded rather than
+leading-plus-half, and check the corpus for "purple" first rather
+than plan a fallback for case 007.
+
+**Corpus check.** Queried the HorseHage Timothy chunk directly
+(id `ec43a939-9f04-5071-4792-70f6e635991a`). Zero occurrences of
+"purple" anywhere in the 1224-char text; title is `null`; handle
+is `horsehage-timothy`. Case 007's exact-pass came from cosine
+finding "horsehage" close enough (0.553) to "purple horsehage" —
+which is the trade-synonym pattern (ADR-0009 pending). The strict
+grounding rule was going to regress case 007; corpus evidence
+confirmed the regression before the check shipped rather than
+after.
+
+**Implementation.**
+
+- `extractContentTokens(query)` and `matchesQueryTokens(query,
+  chunk)` — both pure functions in the tool file, exported for
+  unit-testability. Stopword list is hard-coded in the tool file
+  (English-only, shop-domain-tuned, four classes: grammar / shop-
+  question framing / social filler / fragments). Length filter
+  is ≥ 3 chars.
+- Rule: every content token from the query must appear as a
+  substring of `[handle, title, text].join(' ').toLowerCase()`.
+  Word order does not matter — grounding is on presence, not
+  sequence. Empty-content queries pass through (edge case,
+  practically unreachable).
+- Wired into `invoke()` inside the exact-branch guard. Fails →
+  fall-through to the override checks (unavailable / pending)
+  and, absent a match, to `orderable`.
+- 15 new unit tests (5 for `extractContentTokens`, 8 for
+  `matchesQueryTokens`, 2 for the integration path). Total
+  adapter tests: 123 (was 108).
+
+**Design changes recorded from Vix's approval:**
+
+- **Every token grounded**, not leading-plus-half. Reason: word
+  order is not principled in customer queries — `"Timothy
+  Western Haylage"` and `"haylage, western timothy"` should
+  behave identically. The 50%-of-remainder rule also had a hole
+  (Molichaff Alfalfa against Molichaff Hoofkind passes with
+  leading Molichaff + zero-of-zero remainder). The stricter
+  direction fails to `orderable` (safe), and the smoke measures
+  how often that fires.
+- **Verify before shipping, not after.** Corpus query happened
+  before the check was wired, not after — turned an assumption
+  into a fact and made the case-007 regression a named expected
+  outcome rather than a mystery.
+
+**Baseline shift (before → after, Phase 2 shape validation @ 0.5
+cosine):**
+
+| Case                          | Before          | After           | Direction |
+| ----------------------------- | --------------- | --------------- | --------- |
+| product-044 Western Timothy   | exact (FAIL)    | orderable (PASS) | unsafe → safe |
+| product-007 purple horsehage  | exact (PASS)    | orderable (FAIL) | safe → new-safe-side regression |
+| everything else (14 cases)    | correct         | correct         | unchanged |
+
+Net: still 15/16, but the failure direction has flipped from
+false-`exact` (Moffatt-exposure, three-state design exists to
+prevent it) to false-`orderable` (customer-inconvenience,
+recoverable at the synthesis layer with a "we can source that"
+answer).
+
+**Case 007 as a live ADR-0009 case.** The regression IS the
+motivating case for ADR-0009 (synonym dictionary). Recording
+it here so when ADR-0009 lands, the fix's before/after is
+already anchored to a smoke case with a known score.
+
+**Named limitations in ADR-0016 §3.5:**
+
+- Typos regress to `orderable`. Substring match catches
+  truncation typos by accident (`"molichaf"` is a substring of
+  `"molichaff"`) and misses substitutions cleanly
+  (`"moliehaff"` doesn't ground). Fuzzy/edit-distance is the
+  eventual answer.
+- Trade-synonym queries regress to `orderable` (case 007 is the
+  live instance). ADR-0009 fixes.
+- Brand-name-in-unrelated-product still passes if the token
+  happens to appear in a different product's text. Would need
+  brand-specific attribute extraction (ADR-0004 candidate).
+
+**Next: GW-19 substitute ranking (ADR-0005).** Case 044 is a
+substitute case wearing a failure's clothes — the honest answer
+is "we don't stock Western Timothy Haylage, but we have
+HorseHage Timothy". The retriever found the substitute; the
+tool now correctly labels the relationship as `orderable`; GW-19
+turns the labelled relationship into a surfaced recommendation.
+Design pending.
