@@ -328,27 +328,53 @@ HorseHage Timothy) is a semantic-adjacency finding for the
 retriever, not a threshold sizing problem — no threshold in
 [0.507, 0.644] separates these four cases from each other.
 
-#### The default
+#### The floor — confirmed at 0.5
 
-- **Provisional cosine floor: `0.5`** on the dense retriever's
-  top-1 score. Baseline validation at this floor: 15/16 shape-
-  correct. Sized conservatively so borderline retrievals fall
-  through to `orderable` (safe) rather than becoming `exact`
-  (unsafe). Still not the final threshold — Vix names the
-  confirmed value at close-out based on the cosine distribution
-  above.
+- **Confirmed cosine floor: `0.5`** on the dense retriever's
+  top-1 score. Named at Story-4 close-out against the 2026-09-18
+  cosine distribution above. Baseline validation at this floor:
+  15/16 shape-correct — every non-exact case falls below 0.5, and
+  every exact case reaches it. The one crossing (case 044 Western
+  Timothy at 0.644, expected orderable) is a semantic-adjacency
+  finding, not a threshold sizing problem — no threshold in
+  [0.507, 0.644] separates it from the four legitimate `exact`
+  cases in the same range. Follow-on story (handle-match check
+  on the matched chunk before claiming `exact`) is being designed
+  separately; recorded here so the crossing is not misread as a
+  reason to reconsider the floor.
 - **`null` is characterisation-only.** The smoke script may pass
   `minMatchScore: null` to record the score for every query
   regardless of match, but no path that reaches a customer ever
   uses `null`. Enforced by having the default be a constant, not
   an optional; the smoke is the only caller that overrides it.
 
-The 0.5 default is deliberately conservative on the safety
-axis: false-`orderable` (system says "we can try to source"
-when we actually stock it) is a customer-inconvenience failure;
+The 0.5 floor is deliberately conservative on the safety axis:
+false-`orderable` (system says "we can try to source" when we
+actually stock it) is a customer-inconvenience failure;
 false-`exact` (system says "in stock" when we don't stock it) is
-a promise-breaking failure. Sprint 3 tolerates the first while
-sizing the threshold to eliminate the second.
+a promise-breaking failure. The floor tolerates the first while
+defending against the second.
+
+**Margin: seven thousandths.** The lowest legitimate `exact` case
+sits at cosine `0.507` (product-047 Burlybed). The floor is at
+`0.500`. That gap is thin — one product-listing edit that reduces
+the query↔listing similarity by a few hundredths could push a
+future exact case below the floor, and it would then fall through
+to `orderable` silently. That's the safer failure direction (see
+above), but it's still a regression worth catching. Two revisit
+triggers, either of which prompts a re-measurement:
+
+1. **A new `expected: exact` golden case scores below 0.5** in the
+   Story-4 smoke output. The distribution table above should be
+   part of every Story-4-shaped smoke run's reported diff.
+2. **A corpus refresh moves the distribution.** Migrating to a
+   different embedding model, re-ingesting under a new chunking
+   strategy, or a large product-catalogue import can shift the
+   cosine distribution independently of the tool. After any of
+   these, re-run the smoke and confirm the [0.5, 0.507] margin
+   still holds.
+
+Absent either trigger, `0.5` stands as the measured floor.
 
 #### Options B and C, considered and rejected
 

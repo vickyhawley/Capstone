@@ -32,8 +32,8 @@
  * See ADR-0016 for:
  *   - §1 chunks-as-catalogue reasoning + two-file override model.
  *   - §2 decision logic + result shape + four-state argument.
- *   - §3 `minMatchScore` — provisional 0.5 default until Story 4
- *        close-out measures a data-driven floor.
+ *   - §3 `minMatchScore` — confirmed at 0.5 (cosine, Option A)
+ *        against the 2026-09-18 baseline distribution.
  *   - §5 error contract: infra failure throws; structured errors for
  *        arg validation failures.
  *   - §Framing note: this tool is NOT deterministic. It's hybrid
@@ -64,11 +64,17 @@ import { parse as parseYaml } from 'yaml';
  * ordinal and don't separate exact from orderable; cosine is metric
  * and carries the confidence signal.
  *
- * Value 0.5 is provisional pending the Story-4 cosine-space
- * characterisation. Conservative on the safety axis: false-orderable
- * ("we can source that") is a customer-inconvenience failure;
- * false-exact ("in stock") is a promise-breaking failure. This floor
- * tolerates the first while defending against the second.
+ * Value 0.5 is the confirmed floor against the 2026-09-18 baseline
+ * cosine distribution (Story-4 close-out): exact ∈ [0.507, 0.656],
+ * non-exact ≤ 0.496 except the case-044 semantic-adjacency crossing
+ * at 0.644 (handled separately, not a threshold problem). Margin
+ * from the floor to the lowest exact case is seven thousandths;
+ * revisit triggers named in ADR-0016 §3.
+ *
+ * Conservative on the safety axis: false-orderable ("we can source
+ * that") is a customer-inconvenience failure; false-exact ("in
+ * stock") is a promise-breaking failure. This floor tolerates the
+ * first while defending against the second.
  */
 export const DEFAULT_MIN_MATCH_SCORE = 0.5;
 

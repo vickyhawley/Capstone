@@ -3018,3 +3018,44 @@ rather than two coincidences.
 **Story 4 status: closed. Story now has a working default and a
 measured distribution.** The floor decision remains Vix's; the
 Western Timothy semantic-adjacency case is a Sprint-4 candidate.
+
+### Story 4 formally closed — cosine floor confirmed at 0.5 (2026-09-18)
+
+Floor named against the 2026-09-18 baseline cosine distribution.
+The provisional language is out of ADR-0016 §3, the tool constant's
+docstring, and the smoke output. Story 4's central threshold is
+now measured, not a guess, and the story closes.
+
+**Confirmed:** cosine floor `0.5` on the dense retriever's top-1
+score. Baseline validation: 15/16 shape-correct. The one crossing
+(case 044 Western Timothy) is a semantic-adjacency finding covered
+by the handle-match design (immediate follow-on story, being
+designed).
+
+**Margin: seven thousandths.** Lowest legitimate exact case is
+product-047 Burlybed at cosine `0.507`; floor sits at `0.500`.
+One product-listing edit reducing similarity by a few hundredths
+could push a future exact case below the floor — it would fall to
+`orderable` silently, which is the safer failure direction, but
+still a regression worth catching. Two revisit triggers named in
+ADR-0016 §3:
+
+1. Any new `expected: exact` golden case scoring below 0.5 in the
+   smoke output. The cosine distribution table becomes part of
+   every Story-4-shaped smoke's reported diff so the check is
+   automatic.
+2. A corpus refresh moving the distribution — different embedding
+   model, new chunking strategy, or a large product-catalogue
+   import. Re-run the smoke and confirm the [0.5, 0.507] margin
+   still holds.
+
+**Immediate follow-on: handle-match check for case 044.** Not
+deferred to Sprint 4 — the false-`exact` failure it prevents is a
+live instance, not hypothetical, and the fix is smaller than a
+reranker. Design pending Vix's approval before implementation.
+
+**Next story: GW-19 substitute ranking** (ADR-0005). Case 044 is a
+substitute case wearing a failure's clothes — the honest answer is
+"we don't stock Western Timothy Haylage, but we have HorseHage
+Timothy". Building GW-19 turns the case from a failure into the
+canonical demonstration of the pattern. Design pending.

@@ -186,11 +186,11 @@ function reportDistribution(results: readonly CaseResult[]): void {
     console.log(`               scores: ${scores.map(fmt).join(', ')}`);
   }
   console.log('');
-  console.log('Threshold sizing — the ADR-0016 §3 provisional cosine floor is 0.5.');
-  console.log('Vix names the confirmed floor at close-out based on the cosine');
-  console.log("distribution above (a floor safely below any 'exact' score but");
-  console.log("safely above any non-'exact' score is the target). Do NOT assume");
-  console.log('0.5 transfers just because it is cosine — measure, then name.');
+  console.log('Threshold — the ADR-0016 §3 confirmed cosine floor is 0.5 (Story-4');
+  console.log('close-out, 2026-09-18). Margin from floor to lowest exact case is');
+  console.log('~0.007 (0.507 - 0.500). Revisit if any expected=exact case scores');
+  console.log('below 0.5 in a future run, or after any corpus/embedding refresh');
+  console.log('that shifts the distribution.');
 }
 
 function fmt(x: number | undefined): string {
@@ -275,7 +275,7 @@ async function main(): Promise<void> {
 
   // -------------------------------------------------------------------
   // Phase 2 — Shape validation against the customer-facing default
-  // (ADR-0016 §3 provisional floor = DEFAULT_MIN_MATCH_SCORE = 0.5).
+  // (ADR-0016 §3 confirmed floor = DEFAULT_MIN_MATCH_SCORE = 0.5).
   //
   // No `minMatchScore` passed → the tool's own default applies. This
   // is what customer-reaching paths will see. Shape verification runs
