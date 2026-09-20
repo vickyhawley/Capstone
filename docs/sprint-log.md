@@ -3905,4 +3905,121 @@ customer-real responses — not just the escalate/abstain paths
 and empty strings the pre-synthesis UI would have shown. That's
 the next story.
 
+### Chat UI shell — apps/web replaces scaffold (2026-09-21)
+
+The third Sprint-4 story. `apps/web` was 85 lines of Sprint-0
+scaffold (health check + SSE stream test). This ships a working
+customer surface on top of the /api/answer + /api/about routes.
+
+**Two scope calls made up front:**
+
+1. **Chat shell with collapsible evidence panel.** Multi-turn UI
+   (message history above, input below), stateless API (no GW-16
+   conversation memory dep). Evidence panel — tool_calls,
+   intent, product_query, delivery_zone_status, substitute_
+   handles, trace_id — is collapsed by default under a "Show
+   what I checked · N tools" toggle. The customer-real story is
+   "here's the answer"; the evaluator-real story is "show what
+   I checked" one click away. Degraded turns get a subtle
+   "degraded path" tag next to the toggle.
+2. **CSS Modules, not Tailwind.** Vite supports out-of-box, no
+   new deps, matches the global rule directly. Two files per
+   component (Component.tsx + Component.module.css).
+
+**What landed:**
+
+- `apps/web/src/api/` — thin fetch wrapper (`client.ts`) + a
+  hand-written type mirror of the API contracts (`types.ts`).
+  Deliberately no `@groundwork/api` dependency — web workspace
+  has no dependency on the api workspace's Hono / server
+  plumbing, only on its network contract. Python `ApiResponse`
+  in `evals/groundwork_evals/schema.py` is the source of truth
+  if the mirror ever disagrees.
+- `apps/web/src/components/` — five components:
+  - `Header` + `AboutPanel` for the Article 50 disclosure.
+    Panel lazily fetches /api/about only when opened.
+  - `Chat` owns the message history + submit flow; renders
+    empty state with example-query chips on first load.
+  - `InputBar` — textarea + Send. Enter submits, Shift+Enter
+    newlines.
+  - `Message` + inline `EvidencePanel` — bubbles + collapsible
+    trust receipts.
+- `App.tsx` composes Header + Chat. Scaffold's health-check +
+  SSE stream test removed — the equivalent verification lives
+  in the api workspace tests now.
+- Global `index.css` slimmed to font + reset + shell-container;
+  everything else moved into CSS Modules.
+- One smoke test (`App.test.tsx`, 3 tests) via `@testing-library
+  /react` (new dev-dep, single reason: de-facto React testing
+  convention). Mount → submit query with mocked fetch → assert
+  user + bot messages render → assert evidence panel expands.
+
+**Config decision worth naming:** `noPropertyAccessFromIndex
+Signature` overridden to `false` in `apps/web/tsconfig.json`.
+Vite's CSS Modules type is `Record<string, string>`; the base
+rule (which is on globally for the monorepo) would force
+`styles['bubble']` over `styles.bubble` on every className.
+The rule exists to catch typo-prone data-object access; a
+missing CSS class is a runtime style-not-applied bug, not a
+type-safety issue. The sibling rule
+`noUncheckedIndexedAccess` stays on so a missing key still
+surfaces as `string | undefined`. Targeted override, single
+workspace, named here so it doesn't spread silently.
+
+**Verified:** typecheck + build + unit tests + dev server
+starts and serves the HTML shell. **NOT verified in a
+browser** — the visual/interactive UI (bubble layout, evidence
+panel animation, About toggle, mobile responsiveness) needs
+a person's eyes on http://localhost:5173 with the api dev
+server running alongside. Named honestly per the global rule
+"if you can't test the UI, say so explicitly rather than
+claiming success."
+
+**Also discovered — roadmap items, NOT worked:**
+
+- **Streaming.** The current UI awaits the full JSON response
+  before rendering the bot bubble. Once synthesis grows a
+  streaming path (see synthesis close-out), the InputBar/Chat
+  wire onto SSE for the "watch the answer form" effect that
+  makes AI UX feel alive.
+- **Accessibility audit.** ARIA labels are on the input and
+  buttons; the message history area has `aria-live="polite"`.
+  Not audited beyond that. Screen-reader flow, keyboard nav
+  beyond Enter/Shift-Enter, colour contrast at dark mode —
+  all Sprint-4 hardening if the capstone demo goes browsers-
+  and-a11y-report.
+- **Mobile responsiveness.** Layout uses `max-width: 48rem`
+  and viewport meta, but no mobile-specific testing. The
+  chat area's `calc(100vh - 8rem)` might feel wrong on
+  narrow viewports.
+- **Message history persistence.** Refresh loses the whole
+  conversation. Local storage or IndexedDB persistence is
+  Sprint-4+ if the demo needs "resume where you left off".
+- **Real-time indicator when tools are slow.** Current
+  pending state is a three-dot pulse; a "checking stock…"
+  progressive-disclosure would be more customer-real once
+  streaming lands.
+- **Error retry.** Error messages appear as chat bubbles but
+  the customer has to re-type. A retry button is small work
+  worth doing before the demo.
+
+**Test counts:** web suite 3 (was 0 — scaffold had no tests);
+core 77 unchanged; adapters 183 unchanged; api 46 unchanged;
+ingestion 53 unchanged; Python 112 unchanged. Total 474.
+
+**New dev-dep:** `@testing-library/react` + `@testing-library/
+dom` in the web workspace. Reason: de-facto standard for React
+component testing; jsdom was already wired via vite.config.
+
+**What's now demonstrable end-to-end:** a customer types a
+product question → intent router classifies → planner
+dispatches stock_lookup (+ substitute if non-exact) →
+synthesis composes the answer → UI renders the answer bubble
+with the tool findings one click away. Same for logistics +
+postcode via delivery_zone. Same for escalate/abstain via
+safety-gate copy. Same for infra failure via GW-23 graceful-
+escalate + degraded-path tag. Four paths, all customer-
+real, all evidence-inspectable.
+
+
 
