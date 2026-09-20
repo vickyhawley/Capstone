@@ -3228,6 +3228,22 @@ chosen" rather than "scope was reached".
   attribute rather than reading it from the top-1 corpus chunk.
   Only justified if smoke measures a meaningful "no anchor" fall-
   through rate under Path B.
+- **GW-24 model tiering with runtime cost capture** — the
+  originally-scoped opportunistic item, skipped at Sprint 3
+  close-out. Deferred because (a) the router is already on
+  `gpt-4o-mini` per ADR-0001, so "tier the router" is a no-op,
+  and (b) the synthesis LLM (the only place a tiered fallback
+  would slot into) doesn't exist yet — that's a Sprint-4
+  downstream story. Cost capture without a consumer would ship
+  plumbing (usage extraction → trace attributes → response
+  fields) for numbers no one reads until synthesis lands. The
+  design document's cost section uses estimated figures (public
+  OpenAI pricing × expected token counts, in the cost-model
+  spreadsheet on the gap-window job list) instead of measured
+  ones — stated plainly there. GW-24 becomes real work once
+  synthesis is wired; at that point the cheaper-model fallback
+  slots into GW-23's request-boundary path (route error → try
+  cheaper model → escalate) before escalate is reached.
 
 **Retrieval-quality follow-ons:**
 
@@ -3614,3 +3630,42 @@ The four scoped stories (handle-match check + GW-19 + GW-21 +
 GW-23) have all landed. Sprint 3 closes here regardless of
 what surfaced along the way; every follow-up above is on the
 roadmap list.
+
+### Sprint 3 closes — GW-24 skipped, moved to roadmap (2026-09-18)
+
+The opportunistic fifth item on the freeze list, not a fifth
+scoped story. Skipped rather than shipped for two concrete
+reasons, both structural rather than time-pressure:
+
+1. **The router is already cheap-tiered.** ADR-0001 committed
+   the router to `gpt-4o-mini`; there is no more expensive
+   model above it in the router path to fall back from, and no
+   cheaper model below that would meaningfully move cost. "Tier
+   the router" is a no-op today.
+2. **There is no synthesis LLM to tier toward.** The customer-
+   facing answer synthesis is Sprint-4 downstream work. Model
+   tiering with a hardcoded cheaper-model fallback (the freeze
+   spec's phrasing) only has a slot to occupy once there's a
+   primary synthesis LLM to fall back from. Building cost
+   capture without a consumer would ship plumbing (extract
+   `usage` from OpenAI responses → thread through router /
+   loop / trace → surface on `/api/answer` response) for
+   numbers no one reads until synthesis lands. That's the
+   "no framework overreach" trap the freeze warned against.
+
+**Design-doc consequence, stated plainly:** the cost-model
+section of the Sprint-4 design document uses **estimated**
+figures, not measured. Estimation basis is public OpenAI
+pricing (input/output per-million rates) × expected per-turn
+token counts (router prompt + response for the classifier; the
+synthesis figure carries an explicit assumption when it's
+written). The cost-model spreadsheet on the gap-window job
+list is where those numbers land. GW-24 becomes real work when
+synthesis is wired; at that point the cheaper-model fallback
+slots into GW-23's request-boundary path (router/tool error →
+try cheaper model → escalate) before escalate is reached, and
+runtime cost capture has a downstream consumer.
+
+Sprint 3 closes with four scoped stories shipped and the
+opportunistic fifth honestly deferred. No compressed scope,
+no half-shipped code sitting unwired.
