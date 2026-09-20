@@ -39,6 +39,12 @@ export { StubTraceSink } from './trace-sink/stub-trace-sink.js';
 export { SupabaseTraceSink } from './trace-sink/supabase-trace-sink.js';
 export { NoopPlanner } from './planner/noop-planner.js';
 export { RouteBasedPlanner } from './planner/route-based-planner.js';
+export {
+  OpenAiSynthesizer,
+  SYNTHESIZER_MODEL,
+  renderToolFindings,
+} from './synthesis/openai-synthesizer.js';
+export { StubSynthesizer } from './synthesis/stub-synthesizer.js';
 export { StubCatalogueRepository } from './catalogue-repository/stub-catalogue-repository.js';
 export { NoopReranker } from './reranker/noop-reranker.js';
 

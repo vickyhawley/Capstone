@@ -30,6 +30,7 @@ import {
   DeliveryZoneTool,
   HybridRetriever,
   HybridRouter,
+  OpenAiSynthesizer,
   PgTsRankRetriever,
   PgvectorDenseRetriever,
   ProductStockLookupTool,
@@ -46,6 +47,7 @@ import type {
   Planner,
   Router,
   SafetyGate,
+  Synthesizer,
   ToolRegistry,
   TraceSink,
 } from '@groundwork/core';
@@ -106,6 +108,11 @@ export interface AnswerDeps {
   readonly planner: Planner;
   readonly toolRegistry: ToolRegistry;
   readonly traceSink: TraceSink;
+  /** Sprint 4: composes customer-facing answer copy for
+   *  answer-behaviour turns from the loop's tool outputs.
+   *  Escalate / abstain / degraded turns bypass this — their
+   *  copy is set by the safety gate + graceful-escalate paths. */
+  readonly synthesizer: Synthesizer;
 }
 
 /**
@@ -149,6 +156,7 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
       let toolCalls: readonly ToolCallSummary[] = [];
       let substituteHandles: readonly string[] = [];
       let deliveryZoneStatus: 'within_radius' | 'defer_to_staff' | null = null;
+      let synthesizedAnswer: string | null = null;
       let traceId: string | null = null;
       if (behaviour.kind === 'answer') {
         traceId = generateTraceId();
@@ -185,10 +193,29 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
         // rather than throw.
         substituteHandles = extractSubstituteHandles(loopResult.toolInvocations);
         deliveryZoneStatus = extractDeliveryZoneStatus(loopResult.toolInvocations);
+
+        // Sprint 4: synthesis. Compose the customer-facing answer
+        // copy from the tool loop's outputs + the router's
+        // classification. Failure (LLM 5xx / breaker-open) throws
+        // and gets caught by the request-boundary try/catch as
+        // graceful-escalate (GW-23). Empty-content and malformed
+        // responses land in the adapter's fallback path, NOT here.
+        const synth = await deps.synthesizer.synthesize({
+          query,
+          routerDecision: decision,
+          toolResults: loopResult.toolInvocations,
+        });
+        synthesizedAnswer = synth.answer;
       }
 
       const response: AnswerResponseBody = {
-        answer: behaviourCopy ?? '',
+        // Escalate/abstain copy takes precedence when the safety gate
+        // decided; synthesis fills the answer field on answer-behaviour
+        // turns. `?? ''` is a last-resort guard — behaviourCopy is
+        // guaranteed non-null for non-answer behaviours by the copy
+        // renderer, and synthesizedAnswer is guaranteed non-null for
+        // answer-behaviour turns by the adapter's own fallback.
+        answer: behaviourCopy ?? synthesizedAnswer ?? '',
         citations: [],
         retrieved_chunk_ids: [],
         refusal_reason: behaviour.kind === 'abstain' ? behaviour.refusalReason : null,
@@ -416,5 +443,10 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
     // silently degrades observability without failing the parent
     // request. Not a breaker call site.
     traceSink: new SupabaseTraceSink(supabase),
+    // Sprint 4: OpenAI-backed synthesis. Shares the openai client
+    // with the router + retrievers, wraps under the same openai
+    // breaker so cascading LLM failures open the circuit and route
+    // to graceful-escalate at the request boundary (GW-23).
+    synthesizer: new OpenAiSynthesizer(openai, openaiBreaker),
   };
 }

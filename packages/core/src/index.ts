@@ -48,6 +48,11 @@ export {
 } from './tool-loop.js';
 export type { TraceSink, Span, SpanKind, SpanAttributeValue } from './ports/trace-sink.js';
 export type {
+  Synthesizer,
+  SynthesizerInput,
+  SynthesizerOutput,
+} from './ports/synthesizer.js';
+export type {
   CatalogueRepository,
   Product,
   ProductVariant,

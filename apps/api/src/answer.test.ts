@@ -3,6 +3,7 @@ import {
   RouteBasedPlanner,
   RulesSafetyGate,
   StubRouter,
+  StubSynthesizer,
   StubToolRegistry,
   StubTraceSink,
 } from '@groundwork/adapters';
@@ -44,6 +45,11 @@ function makeDeps(router: Router): AnswerDeps {
     planner: new NoopPlanner(),
     toolRegistry: new StubToolRegistry(),
     traceSink: new StubTraceSink(),
+    // Sprint 4: stub synthesizer returns a fixed string. The
+    // answer-behaviour tests that specifically assert on the
+    // (previously empty) answer field now assert against the stub's
+    // return value; that's flagged in the tests below.
+    synthesizer: new StubSynthesizer('stub-synth-answer'),
   };
 }
 
@@ -54,7 +60,9 @@ describe('POST /api/answer', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toMatchObject({
-      answer: '',
+      // Sprint 4: answer-behaviour turns now populate `answer` via
+      // the synthesizer. Stub returns 'stub-synth-answer'.
+      answer: 'stub-synth-answer',
       citations: [],
       retrieved_chunk_ids: [],
       refusal_reason: null,
@@ -105,12 +113,17 @@ describe('POST /api/answer', () => {
     expect(body['answer']).toBe(ESCALATION_COPY['staff-service']);
   });
 
-  it('answer-behavior leaves answer empty (retrieval/synthesis pending)', async () => {
+  it('answer-behavior populates answer from the synthesizer', async () => {
+    // Sprint 4 replaces the "retrieval/synthesis pending" comment on
+    // this test — synthesis is now wired. Stub returns a fixed
+    // string per the makeDeps setup; the real OpenAiSynthesizer is
+    // exercised by its own unit tests in packages/adapters/src/
+    // synthesis/openai-synthesizer.test.ts.
     const app = createAnswerRoute(makeDeps(new StubRouter('product')));
     const res = await post(app, { query: 'do you sell haynets' });
     const body = (await res.json()) as Record<string, unknown>;
     expect(body['behavior']).toBe('answer');
-    expect(body['answer']).toBe('');
+    expect(body['answer']).toBe('stub-synth-answer');
   });
 
   it('adversarial-suspected + legitimate intent → still answers, signal preserved', async () => {
@@ -270,6 +283,7 @@ describe('POST /api/answer', () => {
       planner: new RouteBasedPlanner(),
       toolRegistry: new FakeToolRegistry(responses),
       traceSink: new StubTraceSink(),
+      synthesizer: new StubSynthesizer('integration-synth-answer'),
     };
   }
 
@@ -378,5 +392,94 @@ describe('POST /api/answer', () => {
     expect(toolCalls.map((tc) => tc.name)).toEqual(['product.stock_lookup']);
     expect(toolCalls[0]?.ok).toBe(false);
     expect(body['substitute_handles']).toEqual([]);
+  });
+
+  // ---------- Sprint 4: synthesis integration ----------
+
+  it('synthesizer receives the tool results + router decision from the loop', async () => {
+    // Capturing synthesizer: records the input the pipeline passed
+    // to it so we can assert the tool results flowed through the
+    // whole route → gate → loop → planner → synth pipeline.
+    let captured: Parameters<
+      import('@groundwork/core').Synthesizer['synthesize']
+    >[0] | null = null;
+    const capturingDeps: AnswerDeps = {
+      router: productRouter('haynets'),
+      safetyGate,
+      planner: new RouteBasedPlanner(),
+      toolRegistry: new FakeToolRegistry({
+        'product.stock_lookup': { ok: true, value: { status: 'exact', matchedTitle: 'Haynet' } },
+      }),
+      traceSink: new StubTraceSink(),
+      synthesizer: {
+        async synthesize(input) {
+          captured = input;
+          return { answer: 'captured-answer', rationale: 'test' };
+        },
+      },
+    };
+    const app = createAnswerRoute(capturingDeps);
+    const res = await post(app, { query: 'do you sell haynets' });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['answer']).toBe('captured-answer');
+    expect(captured).not.toBeNull();
+    // Non-null assertion is safe: the synthesizer ran and assigned.
+    const c = captured!;
+    expect(c.query.text).toBe('do you sell haynets');
+    expect(c.routerDecision.intent).toBe('product');
+    expect(c.routerDecision.productQuery).toBe('haynets');
+    expect(c.toolResults).toHaveLength(1);
+    expect(c.toolResults[0]?.call.name).toBe('product.stock_lookup');
+  });
+
+  it('escalate/abstain turns skip synthesis (safety-gate copy takes precedence)', async () => {
+    // Sprint 4 non-regression: safety-gate copy wins on non-answer
+    // turns. The synthesizer should not run — if it did, the answer
+    // field would carry its output, not the escalate copy.
+    let synthCalled = false;
+    const deps: AnswerDeps = {
+      router: new StubRouter('welfare-clinical'),
+      safetyGate,
+      planner: new RouteBasedPlanner(),
+      toolRegistry: new FakeToolRegistry({}),
+      traceSink: new StubTraceSink(),
+      synthesizer: {
+        async synthesize() {
+          synthCalled = true;
+          return { answer: 'should-not-see-me' };
+        },
+      },
+    };
+    const app = createAnswerRoute(deps);
+    const res = await post(app, { query: 'my horse has colic' });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['behavior']).toBe('escalate');
+    expect(body['answer']).toBe(ESCALATION_COPY.vet);
+    expect(synthCalled).toBe(false);
+  });
+
+  it('synthesizer throw routes through the GW-23 graceful-escalate path', async () => {
+    const deps: AnswerDeps = {
+      router: productRouter('haynets'),
+      safetyGate,
+      planner: new RouteBasedPlanner(),
+      toolRegistry: new FakeToolRegistry({
+        'product.stock_lookup': { ok: true, value: { status: 'exact' } },
+      }),
+      traceSink: new StubTraceSink(),
+      synthesizer: {
+        async synthesize() {
+          throw new Error('simulated openai 5xx');
+        },
+      },
+    };
+    const app = createAnswerRoute(deps);
+    const res = await post(app, { query: 'do you sell haynets' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['behavior']).toBe('escalate');
+    expect(body['escalation_target']).toBe('staff-order');
+    expect(body['answer']).toBe(ESCALATION_COPY['staff-order']);
+    expect(body['degraded_reason']).toBe('simulated openai 5xx');
   });
 });

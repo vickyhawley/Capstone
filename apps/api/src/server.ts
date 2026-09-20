@@ -124,5 +124,10 @@ app.route(
         return (await getAnswerDeps()).traceSink.record(span);
       },
     },
+    synthesizer: {
+      async synthesize(input) {
+        return (await getAnswerDeps()).synthesizer.synthesize(input);
+      },
+    },
   }),
 );
