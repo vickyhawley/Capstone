@@ -3787,3 +3787,122 @@ composes the customer-facing `answer` copy. Once synthesis is in
 place, the UI story (chat shell) has real product-answer content
 to render — not just escalate/abstain copy.
 
+### Synthesis MVP — answer copy from tool findings (2026-09-18)
+
+Sprint 4's load-bearing pillar. `/api/answer` now populates the
+`answer` field for answer-behaviour turns by prompting an LLM with
+the tool loop's outputs. Escalate / abstain / degraded turns keep
+their existing gate-driven copy — synthesis only runs when the
+safety gate said "answer" and the tool loop produced something to
+compose against.
+
+**Four scope calls made up front (recorded here, not asked mid-work):**
+
+1. **LLM: `gpt-4o` via the existing OpenAI client.** No new
+   provider, no dep bump, reuses the openai breaker (GW-23) so
+   cascading LLM failures open the circuit and route to graceful-
+   escalate at the request boundary. GW-24 (when synthesis makes
+   it real) will tier this — probably haiku or sonnet on the
+   cheap path, opus on the escalation path.
+2. **Synchronous JSON, not streaming.** The port returns a full
+   string; the response body is populated before it goes out. A
+   future `StreamingSynthesizer` port amendment (or a second port)
+   handles token-level streaming when the UI wants it. Sprint 0
+   already proved SSE end-to-end works; adding it here would be
+   premature. Named as a Sprint-4+ story on the roadmap section.
+3. **Tool-result-derived grounding, not raw-chunk citations.**
+   The tools already ran retrieval internally (stock_lookup hits
+   the hybrid retriever, delivery_zone hits the district YAML,
+   etc.) and hydrated the metadata the synthesizer needs. Adding
+   raw-chunk citations would require `/api/answer` to run its own
+   retrieval pass on top of the loop — architectural creep for
+   MVP. When that lands (Sprint 4+), the `SynthesizerInput` shape
+   grows a `retrievedChunks` field and the output grows
+   `citations`. Named on the port docstring so the future field
+   slots in without a port break.
+4. **Prohibited-claim enforcement is prompt-only.** The system
+   prompt names the constraints (no clinical language, no
+   fabricated stock/prices, grounding-only). A post-generation
+   substring check + regenerate loop is a Sprint-4 hardening
+   story; today the model is instructed to comply and its
+   compliance is measured via the existing `no_prohibited_claims`
+   metric on the Python side, not enforced at synthesis-time.
+   Named as a real risk — a model that ignores the instruction
+   ships bad copy to a real customer.
+
+**What landed:**
+
+- `Synthesizer` port in `packages/core/src/ports/synthesizer.ts`.
+  One method: `synthesize({query, routerDecision, toolResults}) →
+  {answer, rationale?}`. Future-shaped for citations / streaming
+  without a port break.
+- `OpenAiSynthesizer` adapter (`packages/adapters/src/synthesis/
+  openai-synthesizer.ts`). System prompt with NFCS voice + the
+  four grounding constraints; user message combines the query
+  with a per-tool-invocation findings block. Tool findings are
+  rendered by tool name (stock / substitute / delivery_zone
+  summaries) — unknown tool shapes get JSON-round-tripped so the
+  model still sees them. 9 unit tests including empty-content
+  fallback + infra-failure propagation.
+- `StubSynthesizer` for tests. Fixed answer string, echoes intent
+  + tool count in rationale.
+- Wiring in `/api/answer`: synthesis runs after the tool loop for
+  answer-behaviour turns; escalate / abstain / degraded turns
+  bypass it. Synthesizer throw routes through the GW-23 graceful-
+  escalate catch (verified by integration test).
+- 3 new integration tests: capturing synth verifies the pipeline
+  passes tool results + router decision through; escalate turn
+  verifies synth is NOT called; synth throw verifies GW-23
+  fallback fires.
+- Composition root wires `OpenAiSynthesizer` sharing the openai
+  client + breaker with the router + retrievers.
+
+**Failure taxonomy (recorded explicitly):**
+
+- LLM 5xx / network / breaker-open → throws → GW-23 catches →
+  200 with `staff-order` escalate + `degraded_reason`.
+- LLM returns empty content → adapter returns a canned fallback
+  string ("give the shop a call…") in the `answer` field. Not
+  a 500 — a customer gets a coherent-if-unhelpful reply.
+- LLM returns hallucinated stock / price / clinical advice →
+  no runtime enforcement. Measured by the harness's
+  `no_prohibited_claims` metric on the golden set. If regressions
+  land, the fix is a post-check + regenerate loop (see #4 above).
+
+**Also discovered along the way — roadmap items, NOT worked:**
+
+- **Retrieval pass upstream of the loop.** The synthesizer only
+  sees tool results; a general-question turn (intent=logistics,
+  no postcode — "how much is delivery?") dispatches no tools and
+  synthesis gets an empty findings block, which correctly makes
+  it defer to staff. But a hybrid-retrieval pass over the guides
+  corpus (delivery.md, opening-hours.md) would let synthesis
+  quote the guide directly. Sprint 4+ story; needs a retrieval
+  budget and a grounding shape decision (what counts as a
+  citation from a guide vs a product chunk).
+- **Streaming.** Named above. UI story might force this to
+  land alongside the chat shell.
+- **Golden-case coverage for synthesis output shape.** The
+  `no_prohibited_claims` metric measures the whole answer text;
+  no metric yet checks *positive* grounding ("did the answer
+  actually name the matched product?"). A `grounding_accuracy`
+  metric — the answer mentions X iff the tool findings mention
+  X — is Sprint 4+.
+- **Cost capture.** The synthesizer is now the biggest cost
+  centre per turn. GW-24 (opportunistically deferred at Sprint
+  3 close) has a real target now — cost visibility + hardcoded
+  cheaper-model fallback both slot in here. Not yet promoted
+  from roadmap.
+
+**Test counts:** core suite 77 (unchanged); adapters 183 (+9 for
+OpenAiSynthesizer unit tests); api suite 46 (+3 integration
+tests: pipeline-passthrough, escalate-skips-synth, synth-throw
+→ GW-23); ingestion 53 unchanged; Python 112 unchanged.
+
+**What this unblocks:** the UI. With `answer` copy actually
+populated on answer-behaviour turns, a chat shell can render
+customer-real responses — not just the escalate/abstain paths
+and empty strings the pre-synthesis UI would have shown. That's
+the next story.
+
+
