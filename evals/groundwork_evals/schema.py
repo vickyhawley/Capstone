@@ -159,6 +159,12 @@ class ApiResponse(BaseModel):
     # dispatches `logistics.delivery_zone`. Consumed by
     # `delivery_zone_correct`.
     delivery_zone_status: DeliveryZoneStatus | None = None
+    # GW-23 field (2026-09-18) — populated when the request took
+    # the infra-failure graceful-escalate path (see /api/answer
+    # renderDegradedEscalate). Free string carrying the underlying
+    # error's message. Null on all normal responses. Harness
+    # slicing / graceful-degradation reporting keys on non-null.
+    degraded_reason: str | None = None
 
     model_config = {"extra": "ignore"}
 

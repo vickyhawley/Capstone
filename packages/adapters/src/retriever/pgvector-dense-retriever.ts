@@ -19,6 +19,7 @@
  */
 
 import {
+  type CircuitBreaker,
   EMBEDDING_DIM,
   EMBEDDING_MODEL,
   type RetrievalQuery,
@@ -44,36 +45,48 @@ export class PgvectorDenseRetriever implements Retriever {
   constructor(
     private readonly supabase: SupabaseClient,
     private readonly openai: OpenAI,
+    /** Optional openai breaker wrapping the embed call. GW-23. */
+    private readonly openaiBreaker?: CircuitBreaker,
+    /** Optional supabase breaker wrapping the RPC + metadata SELECT.
+     *  Both go through one breaker instance — they hit the same
+     *  dependency, so counting them separately would open the
+     *  breaker slower than reality warrants. */
+    private readonly supabaseBreaker?: CircuitBreaker,
   ) {}
 
   async retrieve(query: RetrievalQuery): Promise<readonly RetrievedChunk[]> {
     const embedding = await this.embed(query.text);
-    const { data, error } = await this.supabase.rpc('search_chunks_dense', {
-      query_embedding: embedding,
-      match_count: query.topK,
+    // Wrap the RPC + server-error check together so the breaker
+    // sees "server said no" as a throw — Supabase's client returns
+    // {data, error} without throwing on RPC errors, and a bare
+    // .rpc().run() would miss those failures for the failure count.
+    const rows = await this.runSupabase(async (): Promise<DenseRow[]> => {
+      const { data, error } = await this.supabase.rpc('search_chunks_dense', {
+        query_embedding: embedding,
+        match_count: query.topK,
+      });
+      if (error) throw new Error(`dense retrieval failed: ${error.message}`);
+      return (data ?? []) as DenseRow[];
     });
-    if (error) {
-      throw new Error(`dense retrieval failed: ${error.message}`);
-    }
-    const rows = (data ?? []) as DenseRow[];
     if (rows.length === 0) return [];
 
     // Follow-up SELECT for metadata — the RPC returns chunk_text +
     // score but not metadata. See file header for the rationale.
     const chunkIds = rows.map((r) => r.chunk_id);
-    const { data: metaData, error: metaError } = await this.supabase
-      .from('chunks')
-      .select('id, metadata')
-      .in('id', chunkIds);
-    if (metaError) {
-      throw new Error(`dense retrieval metadata hydration failed: ${metaError.message}`);
-    }
+    const metaData = await this.runSupabase(async (): Promise<ChunkMetadataRow[]> => {
+      const { data, error } = await this.supabase
+        .from('chunks')
+        .select('id, metadata')
+        .in('id', chunkIds);
+      if (error) throw new Error(`dense retrieval metadata hydration failed: ${error.message}`);
+      return (data ?? []) as ChunkMetadataRow[];
+    });
     const metaMap = new Map<string, Readonly<Record<string, unknown>>>();
     for (const m of (metaData ?? []) as ChunkMetadataRow[]) {
       if (m.metadata) metaMap.set(m.id, m.metadata);
     }
 
-    return rows.map((row) => {
+    return rows.map((row: DenseRow) => {
       const meta = metaMap.get(row.chunk_id);
       const base = {
         chunkId: row.chunk_id,
@@ -85,11 +98,17 @@ export class PgvectorDenseRetriever implements Retriever {
     });
   }
 
+  /** Wrap a Supabase-touching thunk under the supabase breaker
+   *  (when present). Kept small so the breaker vs no-breaker
+   *  branch is one line, not scattered. */
+  private async runSupabase<T>(fn: () => Promise<T>): Promise<T> {
+    return this.supabaseBreaker ? this.supabaseBreaker.run(fn) : fn();
+  }
+
   private async embed(text: string): Promise<number[]> {
-    const response = await this.openai.embeddings.create({
-      model: EMBEDDING_MODEL,
-      input: text,
-    });
+    const call = async (): Promise<Awaited<ReturnType<OpenAI['embeddings']['create']>>> =>
+      this.openai.embeddings.create({ model: EMBEDDING_MODEL, input: text });
+    const response = await (this.openaiBreaker ? this.openaiBreaker.run(call) : call());
     const first = response.data[0];
     if (!first) {
       throw new Error('embeddings response returned no vectors');

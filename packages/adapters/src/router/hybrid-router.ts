@@ -15,14 +15,23 @@
  * intent was set by an intent-shortcut rule or by the LLM.
  */
 
-import type { Router, RouterDecision, RouterQuery } from '@groundwork/core';
+import type { CircuitBreaker, Router, RouterDecision, RouterQuery } from '@groundwork/core';
 import type OpenAI from 'openai';
 
 import { classifyWithLLM } from './llm-classifier.js';
 import { extractProductQuery, matchIntentRule, matchSafetyRule } from './rules.js';
 
 export class HybridRouter implements Router {
-  constructor(private readonly openai: OpenAI) {}
+  constructor(
+    private readonly openai: OpenAI,
+    /** Optional per-dependency breaker. GW-23. When present, wraps
+     *  the LLM classifier call; on open, the caller receives the
+     *  breaker's throw and converts to graceful-escalate at the
+     *  request boundary. Intent-shortcut rules bypass the LLM and
+     *  therefore bypass the breaker — that's intentional (they
+     *  don't hit openai). */
+    private readonly openaiBreaker?: CircuitBreaker,
+  ) {}
 
   async route(query: RouterQuery): Promise<RouterDecision> {
     const safety = matchSafetyRule(query.text);
@@ -42,7 +51,9 @@ export class HybridRouter implements Router {
         matched: 'rule',
       };
     } else {
-      const llm = await classifyWithLLM(this.openai, query.text);
+      const llm = await (this.openaiBreaker
+        ? this.openaiBreaker.run(() => classifyWithLLM(this.openai, query.text))
+        : classifyWithLLM(this.openai, query.text));
       // Defence-in-depth: on product-intent, if the LLM didn't extract
       // (transient error path returns null, or the LLM missed a common
       // shape), the regex extractor gets a second attempt. ADR-0016 §4.

@@ -11,7 +11,12 @@
  * adapter is a thin wrapper that shapes the response to the port.
  */
 
-import type { RetrievalQuery, RetrievedChunk, Retriever } from '@groundwork/core';
+import type {
+  CircuitBreaker,
+  RetrievalQuery,
+  RetrievedChunk,
+  Retriever,
+} from '@groundwork/core';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 interface SparseRow {
@@ -22,22 +27,32 @@ interface SparseRow {
 }
 
 export class PgTsRankRetriever implements Retriever {
-  constructor(private readonly supabase: SupabaseClient) {}
+  constructor(
+    private readonly supabase: SupabaseClient,
+    /** Optional supabase breaker. GW-23. See dense retriever for
+     *  why RPC error responses are re-thrown inside the wrapped fn
+     *  (so "server said no" counts toward opening). */
+    private readonly supabaseBreaker?: CircuitBreaker,
+  ) {}
 
   async retrieve(query: RetrievalQuery): Promise<readonly RetrievedChunk[]> {
-    const { data, error } = await this.supabase.rpc('search_chunks_sparse', {
-      query_text: query.text,
-      match_count: query.topK,
+    const rows = await this.runSupabase(async (): Promise<SparseRow[]> => {
+      const { data, error } = await this.supabase.rpc('search_chunks_sparse', {
+        query_text: query.text,
+        match_count: query.topK,
+      });
+      if (error) throw new Error(`sparse retrieval failed: ${error.message}`);
+      return (data ?? []) as SparseRow[];
     });
-    if (error) {
-      throw new Error(`sparse retrieval failed: ${error.message}`);
-    }
-    const rows = (data ?? []) as SparseRow[];
     return rows.map((row) => ({
       chunkId: row.chunk_id,
       documentId: row.document_id,
       text: row.chunk_text,
       score: row.score,
     }));
+  }
+
+  private async runSupabase<T>(fn: () => Promise<T>): Promise<T> {
+    return this.supabaseBreaker ? this.supabaseBreaker.run(fn) : fn();
   }
 }

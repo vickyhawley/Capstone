@@ -1,5 +1,11 @@
 export { NotImplementedError } from './errors.js';
 export { EMBEDDING_MODEL, EMBEDDING_DIM } from './embedding.js';
+export {
+  CircuitBreaker,
+  CircuitOpenError,
+  type CircuitBreakerOptions,
+  type CircuitState,
+} from './circuit-breaker.js';
 
 export type { Retriever, RetrievalQuery, RetrievedChunk } from './ports/retriever.js';
 export { INTENTS } from './ports/router.js';

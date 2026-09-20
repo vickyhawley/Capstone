@@ -198,4 +198,36 @@ describe('POST /api/answer', () => {
     expect(body['tool_calls']).toEqual([]);
     expect(body['trace_id']).toBeNull();
   });
+
+  // ---------- GW-23: infra-failure graceful escalate ----------
+
+  // One forced-failure test — the sanctioned scope for GW-23's
+  // smoke. When the router throws (simulating an OpenAI outage
+  // or a CircuitOpenError from the openai breaker), the response
+  // is a 200 with behavior:'escalate' + staff-order + the
+  // reused escalation copy, NOT a 500 or a leaked error message.
+  // `degraded_reason` carries the underlying error text for
+  // observability.
+  it('infra failure (router throws) returns graceful staff-order escalate, not a 500', async () => {
+    const throwingRouter: Router = {
+      async route() {
+        throw new Error('simulated openai outage');
+      },
+    };
+    const app = createAnswerRoute(makeDeps(throwingRouter));
+    const res = await post(app, { query: 'do you sell haynets' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['behavior']).toBe('escalate');
+    expect(body['escalation_target']).toBe('staff-order');
+    expect(body['answer']).toBe(ESCALATION_COPY['staff-order']);
+    // Honest reporting: no fake router classification on the
+    // degraded path.
+    expect(body['intent']).toBeNull();
+    expect(body['refusal_reason']).toBeNull();
+    expect(body['trace_id']).toBeNull();
+    expect(body['tool_calls']).toEqual([]);
+    // The degraded_reason field carries the underlying error text.
+    expect(body['degraded_reason']).toBe('simulated openai outage');
+  });
 });

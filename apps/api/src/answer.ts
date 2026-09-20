@@ -41,7 +41,7 @@ import type {
   ToolRegistry,
   TraceSink,
 } from '@groundwork/core';
-import { renderBehaviour, runToolLoop } from '@groundwork/core';
+import { CircuitBreaker, renderBehaviour, runToolLoop } from '@groundwork/core';
 import { createClient } from '@supabase/supabase-js';
 import { Hono } from 'hono';
 import OpenAI from 'openai';
@@ -59,13 +59,18 @@ interface AnswerResponseBody {
   readonly retrieved_chunk_ids: readonly string[];
   readonly refusal_reason: string | null;
   readonly trace_id: string | null;
-  readonly intent: string;
+  readonly intent: string | null;
   readonly adversarial_suspected: boolean;
   readonly adversarial_pattern: string | null;
   readonly product_query: string | null;
   readonly behavior: 'answer' | 'abstain' | 'escalate';
   readonly escalation_target: string | null;
   readonly tool_calls: readonly ToolCallSummary[];
+  /** GW-23: populated when the request completed via the infra-
+   *  failure graceful-escalate path. Null on all normal responses.
+   *  Machine-readable free string; harness metrics can key on
+   *  non-null to slice degraded turns. */
+  readonly degraded_reason?: string | null;
 }
 
 interface ToolCallSummary {
@@ -104,68 +109,110 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
 
     const query = { text: body.query };
 
-    let decision: Awaited<ReturnType<Router['route']>>;
+    // GW-23: any infra exception (router, tool loop) below converts
+    // to the graceful-escalate response, not a 500. Per-dependency
+    // circuit breakers wired into the router + retrievers throw
+    // CircuitOpenError once N failures accumulate; a bare throw
+    // from an uninstrumented failure path lands here too. Same
+    // shape either way — the safety gate's `escalate` behaviour
+    // with `staff-order` is reused rather than inventing a new
+    // "degraded" enum value, matching existing escalation copy.
     try {
-      decision = await deps.router.route(query);
+      const decision = await deps.router.route(query);
+      const behaviour = deps.safetyGate.decide(decision, query);
+      const behaviourCopy = renderBehaviour(behaviour);
+
+      // GW-18: for answer-behaviour cases, run the bounded tool
+      // loop. Non-answer cases (abstain, escalate) skip the loop
+      // entirely — no tool call is meaningful when we're about to
+      // refuse or escalate.
+      let toolCalls: readonly ToolCallSummary[] = [];
+      let traceId: string | null = null;
+      if (behaviour.kind === 'answer') {
+        traceId = generateTraceId();
+        const loopResult = await runToolLoop(
+          {
+            planner: deps.planner,
+            toolRegistry: deps.toolRegistry,
+            traceSink: deps.traceSink,
+          },
+          {
+            query,
+            routerDecision: decision,
+            retrievedChunks: [], // Retrieval is a Sprint 3 downstream story.
+            traceId,
+          },
+          {
+            maxIterations: MAX_ITERATIONS,
+            timeBudgetMs: TIME_BUDGET_MS,
+            signal: c.req.raw.signal,
+          },
+        );
+        toolCalls = loopResult.toolInvocations.map((inv) => ({
+          name: inv.call.name,
+          args: inv.call.args,
+          ok: inv.result.ok,
+          duration_ms: inv.durationMs,
+        }));
+      }
+
+      const response: AnswerResponseBody = {
+        answer: behaviourCopy ?? '',
+        citations: [],
+        retrieved_chunk_ids: [],
+        refusal_reason: behaviour.kind === 'abstain' ? behaviour.refusalReason : null,
+        trace_id: traceId,
+        intent: decision.intent,
+        adversarial_suspected: decision.adversarialSuspected,
+        adversarial_pattern: decision.adversarialPattern ?? null,
+        product_query: decision.productQuery ?? null,
+        behavior: behaviour.kind,
+        escalation_target: escalationTargetOf(behaviour),
+        tool_calls: toolCalls,
+      };
+      return c.json(response);
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+      const degraded = renderDegradedEscalate(error);
+      return c.json(degraded);
     }
-
-    const behaviour = deps.safetyGate.decide(decision, query);
-    const behaviourCopy = renderBehaviour(behaviour);
-
-    // GW-18: for answer-behaviour cases, run the bounded tool loop.
-    // Non-answer cases (abstain, escalate) skip the loop entirely —
-    // no tool call is meaningful when we're about to refuse or
-    // escalate.
-    let toolCalls: readonly ToolCallSummary[] = [];
-    let traceId: string | null = null;
-    if (behaviour.kind === 'answer') {
-      traceId = generateTraceId();
-      const loopResult = await runToolLoop(
-        {
-          planner: deps.planner,
-          toolRegistry: deps.toolRegistry,
-          traceSink: deps.traceSink,
-        },
-        {
-          query,
-          routerDecision: decision,
-          retrievedChunks: [], // Retrieval is a Sprint 3 downstream story.
-          traceId,
-        },
-        {
-          maxIterations: MAX_ITERATIONS,
-          timeBudgetMs: TIME_BUDGET_MS,
-          signal: c.req.raw.signal,
-        },
-      );
-      toolCalls = loopResult.toolInvocations.map((inv) => ({
-        name: inv.call.name,
-        args: inv.call.args,
-        ok: inv.result.ok,
-        duration_ms: inv.durationMs,
-      }));
-    }
-
-    const response: AnswerResponseBody = {
-      answer: behaviourCopy ?? '',
-      citations: [],
-      retrieved_chunk_ids: [],
-      refusal_reason: behaviour.kind === 'abstain' ? behaviour.refusalReason : null,
-      trace_id: traceId,
-      intent: decision.intent,
-      adversarial_suspected: decision.adversarialSuspected,
-      adversarial_pattern: decision.adversarialPattern ?? null,
-      product_query: decision.productQuery ?? null,
-      behavior: behaviour.kind,
-      escalation_target: escalationTargetOf(behaviour),
-      tool_calls: toolCalls,
-    };
-    return c.json(response);
   });
 
   return route;
+}
+
+/**
+ * Build the graceful-escalate response for an infra failure. GW-23.
+ *
+ * Reuses the safety gate's `escalate` behaviour with `staff-order`
+ * so downstream consumers (harness metrics, UI) that already
+ * switch on the escalate/target shape need no change. The
+ * `refusal_reason` field stays null — this is not a refusal, it's
+ * a degraded route to staff. `intent` reports 'unknown' honestly
+ * rather than fabricating a classification the router never
+ * returned.
+ */
+function renderDegradedEscalate(error: unknown): AnswerResponseBody {
+  const message = error instanceof Error ? error.message : String(error);
+  const escalate: Behaviour = { kind: 'escalate', escalationTarget: 'staff-order' };
+  const copy = renderBehaviour(escalate) ?? '';
+  return {
+    answer: copy,
+    citations: [],
+    retrieved_chunk_ids: [],
+    refusal_reason: null,
+    trace_id: null,
+    // Null rather than a placeholder — the router never returned
+    // a classification on this path. Reporting a fake intent would
+    // corrupt harness slicing.
+    intent: null,
+    adversarial_suspected: false,
+    adversarial_pattern: null,
+    product_query: null,
+    behavior: 'escalate',
+    escalation_target: 'staff-order',
+    tool_calls: [],
+    degraded_reason: message,
+  };
 }
 
 function escalationTargetOf(b: Behaviour): string | null {
@@ -218,6 +265,23 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
     auth: { persistSession: false },
   });
 
+  // GW-23: per-dependency circuit breakers. Failure threshold and
+  // cooldown are set for demo-legibility rather than tuned against
+  // production traffic — 5 consecutive failures in a demo window
+  // is enough to be clearly "broken" without being trigger-happy
+  // on a single transient error, and 30s cooldown means the
+  // half-open probe happens well within a viewer's attention span.
+  // These numbers are stated honestly in the sprint-log close-out
+  // as chosen-not-tuned; production tuning is a Sprint-4 candidate.
+  const openaiBreaker = new CircuitBreaker('openai', {
+    failureThreshold: 5,
+    cooldownMs: 30_000,
+  });
+  const supabaseBreaker = new CircuitBreaker('supabase', {
+    failureThreshold: 5,
+    cooldownMs: 30_000,
+  });
+
   // GW-20: real tool registry, replacing StubToolRegistry. The tool
   // takes two retrievers per ADR-0016 §3 Option A: the hybrid
   // retriever owns ordering + chunk IDs; the dense retriever owns
@@ -229,8 +293,8 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
   // `null` minMatchScore is not passed from this path — the tool's
   // default (ADR-0016 §3) applies to every customer-reaching call.
   // Only the smoke script sets `null` for characterisation.
-  const dense = new PgvectorDenseRetriever(supabase, openai);
-  const sparse = new PgTsRankRetriever(supabase);
+  const dense = new PgvectorDenseRetriever(supabase, openai, openaiBreaker, supabaseBreaker);
+  const sparse = new PgTsRankRetriever(supabase, supabaseBreaker);
   const retriever = new HybridRetriever(dense, sparse, rrf());
   const outOfScopePath =
     process.env['STOCK_LOOKUP_OUT_OF_SCOPE_PATH'] ?? 'data/nfcs-out-of-scope.yaml';
@@ -258,10 +322,14 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
   ]);
 
   return {
-    router: new HybridRouter(openai),
+    router: new HybridRouter(openai, openaiBreaker),
     safetyGate: new RulesSafetyGate(),
     planner: new NoopPlanner(),
     toolRegistry,
+    // Trace sink stays uninstrumented — its port contract already
+    // makes failures best-effort, so a Supabase outage there
+    // silently degrades observability without failing the parent
+    // request. Not a breaker call site.
     traceSink: new SupabaseTraceSink(supabase),
   };
 }
