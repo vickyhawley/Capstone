@@ -1,12 +1,19 @@
 import {
   NoopPlanner,
+  RouteBasedPlanner,
   RulesSafetyGate,
   StubRouter,
   StubToolRegistry,
   StubTraceSink,
 } from '@groundwork/adapters';
 import { ABSTAIN_COPY, ESCALATION_COPY } from '@groundwork/core';
-import type { Router } from '@groundwork/core';
+import type {
+  Router,
+  ToolDefinition,
+  ToolInvocation,
+  ToolRegistry,
+  ToolResult,
+} from '@groundwork/core';
 import { describe, expect, it } from 'vitest';
 
 import { type AnswerDeps, createAnswerRoute } from './answer.js';
@@ -229,5 +236,147 @@ describe('POST /api/answer', () => {
     expect(body['tool_calls']).toEqual([]);
     // The degraded_reason field carries the underlying error text.
     expect(body['degraded_reason']).toBe('simulated openai outage');
+  });
+
+  // ---------- Sprint 4: Tier-1 dispatch + tool-output plumbing ----------
+
+  // The FakeToolRegistry returns fixed shapes for the three Sprint-3
+  // tool names. Real tools hit Supabase / OpenAI; the integration
+  // tests below focus on planner-loop-response wiring, so a fake
+  // keeps them deterministic and fast.
+  class FakeToolRegistry implements ToolRegistry {
+    constructor(private readonly responses: Record<string, ToolResult>) {}
+    list(): readonly ToolDefinition[] {
+      return Object.keys(this.responses).map((name) => ({
+        name,
+        description: `fake ${name}`,
+        schema: { type: 'object', properties: {}, required: [] },
+      }));
+    }
+    async invoke(call: ToolInvocation): Promise<ToolResult> {
+      const r = this.responses[call.name];
+      if (!r) return { ok: false, error: `no fake for ${call.name}`, retryable: false };
+      return r;
+    }
+  }
+
+  function makeDepsWithRealPlanner(
+    router: Router,
+    responses: Record<string, ToolResult>,
+  ): AnswerDeps {
+    return {
+      router,
+      safetyGate,
+      planner: new RouteBasedPlanner(),
+      toolRegistry: new FakeToolRegistry(responses),
+      traceSink: new StubTraceSink(),
+    };
+  }
+
+  function productRouter(productQuery: string): Router {
+    return {
+      async route() {
+        return {
+          intent: 'product',
+          confidence: 1.0,
+          rationale: 'test',
+          matched: 'llm',
+          adversarialSuspected: false,
+          productQuery,
+        };
+      },
+    };
+  }
+
+  function logisticsRouter(postcode: string | undefined): Router {
+    return {
+      async route() {
+        return {
+          intent: 'logistics',
+          confidence: 1.0,
+          rationale: 'test',
+          matched: 'llm',
+          adversarialSuspected: false,
+          ...(postcode !== undefined ? { postcode } : {}),
+        };
+      },
+    };
+  }
+
+  it('product intent + productQuery + orderable stock → dispatches both tools, surfaces handles', async () => {
+    const app = createAnswerRoute(
+      makeDepsWithRealPlanner(productRouter('haygates conditioning cubes'), {
+        'product.stock_lookup': { ok: true, value: { status: 'orderable' } },
+        'product.substitute_lookup': {
+          ok: true,
+          value: {
+            substitutes: [{ handle: 'hilight-conditioning-cubes' }, { handle: 'other' }],
+          },
+        },
+      }),
+    );
+    const res = await post(app, { query: 'do you stock haygates conditioning cubes' });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['behavior']).toBe('answer');
+    const toolCalls = body['tool_calls'] as Array<{ name: string }>;
+    expect(toolCalls.map((tc) => tc.name)).toEqual([
+      'product.stock_lookup',
+      'product.substitute_lookup',
+    ]);
+    expect(body['substitute_handles']).toEqual(['hilight-conditioning-cubes', 'other']);
+    expect(body['delivery_zone_status']).toBeNull();
+  });
+
+  it('product intent + productQuery + exact stock → dispatches stock_lookup only, no substitutes', async () => {
+    const app = createAnswerRoute(
+      makeDepsWithRealPlanner(productRouter('purple horsehage'), {
+        'product.stock_lookup': { ok: true, value: { status: 'exact' } },
+      }),
+    );
+    const res = await post(app, { query: 'do you sell purple horsehage' });
+    const body = (await res.json()) as Record<string, unknown>;
+    const toolCalls = body['tool_calls'] as Array<{ name: string }>;
+    expect(toolCalls.map((tc) => tc.name)).toEqual(['product.stock_lookup']);
+    expect(body['substitute_handles']).toEqual([]);
+  });
+
+  it('logistics intent + postcode → dispatches delivery_zone, surfaces status', async () => {
+    const app = createAnswerRoute(
+      makeDepsWithRealPlanner(logisticsRouter('BH24'), {
+        'logistics.delivery_zone': { ok: true, value: { status: 'within_radius' } },
+      }),
+    );
+    const res = await post(app, { query: 'do you deliver to BH24' });
+    const body = (await res.json()) as Record<string, unknown>;
+    const toolCalls = body['tool_calls'] as Array<{ name: string }>;
+    expect(toolCalls.map((tc) => tc.name)).toEqual(['logistics.delivery_zone']);
+    expect(body['delivery_zone_status']).toBe('within_radius');
+    expect(body['substitute_handles']).toEqual([]);
+  });
+
+  it('logistics intent without postcode → dispatches nothing, response fields empty', async () => {
+    const app = createAnswerRoute(
+      makeDepsWithRealPlanner(logisticsRouter(undefined), {
+        'logistics.delivery_zone': { ok: true, value: { status: 'within_radius' } },
+      }),
+    );
+    const res = await post(app, { query: 'how much is delivery' });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['tool_calls']).toEqual([]);
+    expect(body['delivery_zone_status']).toBeNull();
+  });
+
+  it('product intent + productQuery + failed stock_lookup → planner terminates, no substitute call', async () => {
+    const app = createAnswerRoute(
+      makeDepsWithRealPlanner(productRouter('haynets'), {
+        'product.stock_lookup': { ok: false, error: 'boom', retryable: false },
+      }),
+    );
+    const res = await post(app, { query: 'do you sell haynets' });
+    const body = (await res.json()) as Record<string, unknown>;
+    const toolCalls = body['tool_calls'] as Array<{ name: string; ok: boolean }>;
+    expect(toolCalls.map((tc) => tc.name)).toEqual(['product.stock_lookup']);
+    expect(toolCalls[0]?.ok).toBe(false);
+    expect(body['substitute_handles']).toEqual([]);
   });
 });

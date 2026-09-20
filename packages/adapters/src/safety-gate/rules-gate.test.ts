@@ -131,31 +131,19 @@ describe('RulesSafetyGate — remote-fitting tag rule (case 028)', () => {
   }
 });
 
-describe('RulesSafetyGate — delivery-edge tag rule (case 031)', () => {
-  it('fires on UK outward postcode', () => {
-    expect(
-      gate.decide(decision({ intent: 'logistics' }), {
-        text: 'do you deliver to Salisbury (SP1)',
-      }),
-    ).toEqual({ kind: 'escalate', escalationTarget: 'staff-order' });
-  });
-
-  it('fires on "N miles" distance phrasing', () => {
-    expect(
-      gate.decide(decision({ intent: 'logistics' }), {
-        text: 'we are about 30 miles from you can you still deliver',
-      }),
-    ).toEqual({ kind: 'escalate', escalationTarget: 'staff-order' });
-  });
-
-  const guards = [
-    'do you deliver to Wimborne on Saturdays',
-    'i live just round the corner do you deliver',
-    'how much is delivery please',
+describe('RulesSafetyGate — postcode-shaped logistics queries flow to delivery zone tool (Sprint 4)', () => {
+  // The old `logistics:delivery-edge` tag rule short-circuited these
+  // to escalate. With the tool in place (GW-21) and Tier-1 dispatch
+  // running them through it, the safety gate returns `answer` and
+  // the tool decides. See tag-rules.ts header for the rationale.
+  const shouldNowAnswer = [
+    'do you deliver to Salisbury (SP1)',
+    'do you deliver to Ringwood BH24',
+    'we are about 30 miles from you can you still deliver',
   ];
 
-  for (const text of guards) {
-    it(`does NOT fire (adjacent answer): "${text}"`, () => {
+  for (const text of shouldNowAnswer) {
+    it(`answer (tool decides): "${text}"`, () => {
       expect(gate.decide(decision({ intent: 'logistics' }), { text })).toEqual({ kind: 'answer' });
     });
   }

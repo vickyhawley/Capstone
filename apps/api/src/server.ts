@@ -1,4 +1,4 @@
-import { NoopPlanner, RulesSafetyGate } from '@groundwork/adapters';
+import { RouteBasedPlanner, RulesSafetyGate } from '@groundwork/adapters';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { createAboutRoute } from './about.js';
@@ -92,7 +92,10 @@ app.route('/api/about', createAboutRoute());
 // ProductStockLookupTool (GW-20) loads two YAML files at startup.
 // Non-env-dependent deps are built once eagerly.
 const eagerSafetyGate = new RulesSafetyGate();
-const eagerPlanner = new NoopPlanner();
+// Sprint 4: RouteBasedPlanner replaces NoopPlanner so the three
+// Sprint-3 tools actually fire on real requests (Tier-1 dispatch
+// per ADR-0014). Stateless — safe to construct once at import time.
+const eagerPlanner = new RouteBasedPlanner();
 app.route(
   '/api/answer',
   createAnswerRoute({

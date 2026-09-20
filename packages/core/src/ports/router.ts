@@ -77,6 +77,19 @@ export interface RouterDecision {
    * `intent_classification_accuracy`).
    */
   readonly productQuery?: string;
+  /**
+   * Sprint 4 (Tier-1 route-based dispatch). Symmetric with
+   * `productQuery`: a postcode-shaped substring extracted from the
+   * query when intent === 'logistics'. When set, the Tier-1 planner
+   * fires `logistics.delivery_zone { postcode }`. The value is
+   * intentionally not-yet-normalised — the delivery-zone tool owns
+   * the outward-code extraction (see delivery-zone-tool.ts's
+   * `extractOutwardCode`).
+   *
+   * Absent when the query is a general delivery question ("how much
+   * is delivery?"), a compound message, or non-logistics intent.
+   */
+  readonly postcode?: string;
 }
 
 export interface Router {

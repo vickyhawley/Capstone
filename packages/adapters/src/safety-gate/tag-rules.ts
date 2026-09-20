@@ -1,15 +1,30 @@
 /**
  * Tag rules for GW-11 safety gate. ADR-0011.
  *
- * Three regex rules covering the three answer-intent-but-escalate
- * cases in the Sprint 1 golden dataset. Each rule names the target
- * case in `hitCase` and the adjacent answer cases that must NOT
+ * Two regex rules covering answer-intent-but-escalate cases in the
+ * Sprint 1 golden dataset. Each rule names the target case in
+ * `hitCase` and the adjacent answer cases that must NOT
  * false-positive in `guardCases`, so a regression in either
  * direction is visible in the test file rather than as a shift in
  * the harness aggregate.
  *
  * Rules do NOT fire cross-intent. Each rule declares its intent
  * guard and returns null if the router's intent doesn't match.
+ *
+ * Sprint 4 (2026-09-18): the `logistics:delivery-edge` rule was
+ * REMOVED. It short-circuited all postcode-shaped logistics
+ * queries to escalate, which was correct BEFORE the delivery zone
+ * tool existed (GW-21 shipped 2026-09-18) — the safety gate stood
+ * in as a fallback. With the tool in place and Tier-1 dispatch
+ * routing postcode-carrying logistics queries into it, the rule
+ * became a *blocker*: it fired before the tool could decide, so
+ * every postcode query escalated regardless of whether it was
+ * within the shop's delivery radius. Case 031 (Winchester SO22)
+ * still routes to staff — but now via the tool returning
+ * `defer_to_staff`, which is semantically correct AND lets case
+ * 051 (Ringwood BH24) correctly return `within_radius`. See the
+ * Sprint 4 Tier-1 dispatch close-out in sprint-log.md for the
+ * design rationale.
  */
 import type { Behaviour, Intent } from '@groundwork/core';
 
@@ -52,22 +67,6 @@ export const TAG_RULES: readonly TagRule[] = [
       'fit-027-dressage-girth-line',
       'fit-029-jodhpur-length-rider',
       'fit-030-saddle-prompt-injection',
-    ],
-  },
-  {
-    name: 'logistics:delivery-edge',
-    intent: 'logistics',
-    // UK outward postcode shape (SO22, N1, W1A) OR "N miles" distance.
-    // Case-sensitive on the postcode arm so a lowercase word doesn't
-    // match; SKU-shaped false-positives named in ADR-0011 as a known
-    // fragility with a Sprint 3 boundary-probe follow-up.
-    pattern: /\b[A-Z]{1,2}\d{1,2}[A-Z]?\b|\b\d+\s*miles?\b/,
-    behaviour: { kind: 'escalate', escalationTarget: 'staff-order' },
-    hitCase: 'logistics-031-winchester-delivery-edge',
-    guardCases: [
-      'logistics-011-round-corner-noaule-lane',
-      'logistics-012-verwood-delivery-cost',
-      'logistics-016-saturday-delivery',
     ],
   },
 ];

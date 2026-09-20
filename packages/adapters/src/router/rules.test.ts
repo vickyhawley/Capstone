@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import {
   INTENT_RULES,
   SAFETY_RULES,
+  extractPostcode,
   extractProductQuery,
   matchIntentRule,
   matchSafetyRule,
@@ -201,6 +202,43 @@ describe('router rules layer', () => {
       // "do you stock stock" would extract "stock" as the body.
       // GENERIC_TOKENS filters this out — it's not a product-string.
       expect(extractProductQuery('do you stock stock')).toBeNull();
+    });
+  });
+
+  describe('extractPostcode — rule-based extraction (Sprint 4, Tier-1 dispatch)', () => {
+    it('extracts an outward-only postcode', () => {
+      expect(extractPostcode('do you deliver to BH24?')).toBe('BH24');
+      expect(extractPostcode('SO22')).toBe('SO22');
+    });
+
+    it('extracts a full postcode with space', () => {
+      expect(extractPostcode('deliver to BH24 1AA please')).toBe('BH24 1AA');
+    });
+
+    it('is case-insensitive', () => {
+      expect(extractPostcode('deliver to bh24')).toBe('bh24');
+    });
+
+    it('returns the first postcode when multiple are present', () => {
+      // Real-customer shape: "we moved from BH24 to SO22". The tool
+      // owns disambiguation semantically; the extractor returns first-
+      // match by design.
+      expect(extractPostcode('we moved from BH24 to SO22')).toBe('BH24');
+    });
+
+    it('returns null when no postcode-shaped substring is present', () => {
+      expect(extractPostcode('do you deliver to Ringwood?')).toBeNull();
+      expect(extractPostcode('how much is delivery?')).toBeNull();
+      expect(extractPostcode('')).toBeNull();
+    });
+
+    it('does not match plain numbers or letters alone', () => {
+      expect(extractPostcode('order number 12345')).toBeNull();
+      expect(extractPostcode('BH is nice')).toBeNull();
+    });
+
+    it('handles standalone outward within a sentence', () => {
+      expect(extractPostcode('I live in the SO22 area')).toBe('SO22');
     });
   });
 });

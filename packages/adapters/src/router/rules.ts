@@ -202,3 +202,42 @@ export function extractProductQuery(query: string): string | null {
   }
   return null;
 }
+
+// ---------- Postcode extraction (Sprint 4 — Tier-1 dispatch) ----------
+//
+// Symmetric with productQuery: extract the outward code from a
+// customer message so the router can populate RouterDecision.postcode
+// for the Tier-1 planner to dispatch `logistics.delivery_zone` with.
+//
+// The tool itself accepts both outward-only ("BH24") and full
+// postcodes ("BH24 1AA") and normalises internally, so this extractor
+// is intentionally permissive — it returns whatever postcode-shaped
+// substring it finds first. Normalisation and district-lookup are the
+// tool's concern. Anchored to word boundaries so "BH24" inside
+// something like "ordered BH24 items" doesn't false-match a
+// non-postcode alphanumeric.
+//
+// Two forms accepted:
+//   - Outward-only (A9, A9A, A99, AA9, AA9A, AA99) as a standalone token
+//   - Full (outward + optional space + inward `9AA`)
+//
+// A word-boundary check on the outward side prevents false matches
+// on the inside of other tokens; the whole-token capture prevents
+// partial matches of longer identifiers.
+const POSTCODE_RE =
+  /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})?\b/i;
+
+/**
+ * Extract the first postcode-shaped substring from a customer query.
+ * Returns the raw match (outward + optional inward, preserving the
+ * caller's spacing) or null when no candidate is found. The delivery-
+ * zone tool handles normalisation.
+ */
+export function extractPostcode(query: string): string | null {
+  const m = POSTCODE_RE.exec(query);
+  if (!m) return null;
+  const outward = m[1];
+  const inward = m[2];
+  if (!outward) return null;
+  return inward ? `${outward} ${inward}` : outward;
+}

@@ -1,12 +1,20 @@
 /**
  * POST /api/answer — the endpoint the eval harness hits.
  *
- * Sprint 3 shape (GW-10 + GW-11 + GW-12 + GW-18 landed; GW-20+ tools
- * and synthesis pending): runs the intent router, then the safety
- * gate, then — for `answer` behaviour — runs the bounded tool loop
- * (ADR-0014) with a NoopPlanner + empty tool registry until GW-20/21/22
- * register real tools. `answer` / `citations` / `retrieved_chunk_ids`
- * are populated only when synthesis lands downstream.
+ * Sprint 4 shape (opener): runs the intent router (with per-
+ * dependency circuit breakers, GW-23), then the safety gate, then —
+ * for `answer` behaviour — runs the bounded tool loop (ADR-0014)
+ * with a `RouteBasedPlanner` doing Tier-1 dispatch. Product intent +
+ * productQuery dispatches `product.stock_lookup` and conditionally
+ * `product.substitute_lookup`; logistics intent + postcode dispatches
+ * `logistics.delivery_zone`. Tool outputs surface on the response as
+ * `substitute_handles` and `delivery_zone_status`.
+ *
+ * `answer` copy for non-escalate/non-abstain turns is still empty —
+ * synthesis (Sprint 4, next story) composes it from tool results +
+ * retrieved chunks. Escalate/abstain/degraded turns already carry
+ * the correct customer copy via the safety gate + degraded-escalate
+ * paths.
  *
  * The response schema matches `evals/groundwork_evals/schema.py`
  * `ApiResponse` — that Python file is the source of truth per
@@ -22,11 +30,11 @@ import {
   DeliveryZoneTool,
   HybridRetriever,
   HybridRouter,
-  NoopPlanner,
   PgTsRankRetriever,
   PgvectorDenseRetriever,
   ProductStockLookupTool,
   ProductSubstituteLookupTool,
+  RouteBasedPlanner,
   RulesSafetyGate,
   SupabaseTraceSink,
   loadDeliveryDistricts,
@@ -66,6 +74,18 @@ interface AnswerResponseBody {
   readonly behavior: 'answer' | 'abstain' | 'escalate';
   readonly escalation_target: string | null;
   readonly tool_calls: readonly ToolCallSummary[];
+  /** Sprint 4 (Tier-1 dispatch): handles from `product.substitute_lookup`
+   *  when the loop dispatched it. Empty when the tool didn't run
+   *  (stock returned 'exact' or 'pending', substitute short-circuited,
+   *  or planner terminated before dispatch). Consumed by the Python
+   *  harness `substitute_offered_correct` metric — closes the GW-19
+   *  producer-ahead-of-consumer gap. */
+  readonly substitute_handles: readonly string[];
+  /** Sprint 4 (Tier-1 dispatch): status from `logistics.delivery_zone`
+   *  when the loop dispatched it. Null when the tool didn't run.
+   *  Consumed by the Python harness `delivery_zone_correct` metric —
+   *  closes the GW-21 producer-ahead-of-consumer gap. */
+  readonly delivery_zone_status: 'within_radius' | 'defer_to_staff' | null;
   /** GW-23: populated when the request completed via the infra-
    *  failure graceful-escalate path. Null on all normal responses.
    *  Machine-readable free string; harness metrics can key on
@@ -127,6 +147,8 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
       // entirely — no tool call is meaningful when we're about to
       // refuse or escalate.
       let toolCalls: readonly ToolCallSummary[] = [];
+      let substituteHandles: readonly string[] = [];
+      let deliveryZoneStatus: 'within_radius' | 'defer_to_staff' | null = null;
       let traceId: string | null = null;
       if (behaviour.kind === 'answer') {
         traceId = generateTraceId();
@@ -154,6 +176,15 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
           ok: inv.result.ok,
           duration_ms: inv.durationMs,
         }));
+        // Sprint 4: surface the two tool-output fields the Python
+        // schema already carries so `substitute_offered_correct` /
+        // `delivery_zone_correct` metrics have something to read.
+        // Extraction reads the full ToolInvocationRecord (not the
+        // ToolCallSummary above, which has already dropped
+        // result.value). Unknown shapes degrade to null / empty
+        // rather than throw.
+        substituteHandles = extractSubstituteHandles(loopResult.toolInvocations);
+        deliveryZoneStatus = extractDeliveryZoneStatus(loopResult.toolInvocations);
       }
 
       const response: AnswerResponseBody = {
@@ -169,6 +200,8 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
         behavior: behaviour.kind,
         escalation_target: escalationTargetOf(behaviour),
         tool_calls: toolCalls,
+        substitute_handles: substituteHandles,
+        delivery_zone_status: deliveryZoneStatus,
       };
       return c.json(response);
     } catch (error) {
@@ -211,8 +244,57 @@ function renderDegradedEscalate(error: unknown): AnswerResponseBody {
     behavior: 'escalate',
     escalation_target: 'staff-order',
     tool_calls: [],
+    substitute_handles: [],
+    delivery_zone_status: null,
     degraded_reason: message,
   };
+}
+
+// ---------- Sprint 4: tool-output extraction for ApiResponse ----------
+//
+// Tool results flow through the loop as opaque `unknown` values by
+// port contract (ToolResult.value is unknown so tool authors' surfaces
+// stay flexible). The two extractors below reach INTO that unknown
+// with defensive shape checks. Two rules:
+//   1. Unknown shapes must degrade to empty/null, never throw. A
+//      broken tool result should not fail the whole response.
+//   2. Tool name is the switch — matches the string constants used
+//      in the tools themselves (product.substitute_lookup /
+//      logistics.delivery_zone). Rename a tool → update here.
+
+interface ToolInvocationLite {
+  readonly call: { readonly name: string };
+  readonly result: { readonly ok: boolean; readonly value?: unknown };
+}
+
+function extractSubstituteHandles(
+  invocations: readonly ToolInvocationLite[],
+): readonly string[] {
+  const substituteInv = invocations.find(
+    (inv) => inv.call.name === 'product.substitute_lookup' && inv.result.ok,
+  );
+  if (!substituteInv) return [];
+  const value = substituteInv.result.value as
+    | { readonly substitutes?: readonly { readonly handle?: unknown }[] }
+    | undefined;
+  const substitutes = value?.substitutes;
+  if (!Array.isArray(substitutes)) return [];
+  return substitutes
+    .map((s) => (typeof s?.handle === 'string' ? s.handle : null))
+    .filter((h): h is string => h !== null);
+}
+
+function extractDeliveryZoneStatus(
+  invocations: readonly ToolInvocationLite[],
+): 'within_radius' | 'defer_to_staff' | null {
+  const deliveryInv = invocations.find(
+    (inv) => inv.call.name === 'logistics.delivery_zone' && inv.result.ok,
+  );
+  if (!deliveryInv) return null;
+  const value = deliveryInv.result.value as { readonly status?: unknown } | undefined;
+  const status = value?.status;
+  if (status === 'within_radius' || status === 'defer_to_staff') return status;
+  return null;
 }
 
 function escalationTargetOf(b: Behaviour): string | null {
@@ -324,7 +406,10 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
   return {
     router: new HybridRouter(openai, openaiBreaker),
     safetyGate: new RulesSafetyGate(),
-    planner: new NoopPlanner(),
+    // Sprint 4: real planner. Replaces NoopPlanner so product-intent
+    // + productQuery / logistics-intent + postcode requests actually
+    // dispatch tools. ADR-0014 Tier-1 dispatch.
+    planner: new RouteBasedPlanner(),
     toolRegistry,
     // Trace sink stays uninstrumented — its port contract already
     // makes failures best-effort, so a Supabase outage there

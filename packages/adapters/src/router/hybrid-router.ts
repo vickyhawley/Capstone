@@ -19,7 +19,12 @@ import type { CircuitBreaker, Router, RouterDecision, RouterQuery } from '@groun
 import type OpenAI from 'openai';
 
 import { classifyWithLLM } from './llm-classifier.js';
-import { extractProductQuery, matchIntentRule, matchSafetyRule } from './rules.js';
+import {
+  extractPostcode,
+  extractProductQuery,
+  matchIntentRule,
+  matchSafetyRule,
+} from './rules.js';
 
 export class HybridRouter implements Router {
   constructor(
@@ -41,14 +46,23 @@ export class HybridRouter implements Router {
     let base: Omit<RouterDecision, 'adversarialSuspected' | 'adversarialPattern'>;
 
     if (intentRule) {
-      // Intent-shortcut rules today only cover service-referral +
-      // logistics:order-status. Neither is a product intent, so
-      // productQuery is not populated on this branch.
+      // Intent-shortcut rules today cover service-referral +
+      // logistics:order-status. Service-referral has no entity to
+      // extract; the order-status shape IS a logistics intent, so
+      // extract a postcode if one's present (order-status queries
+      // can still carry a postcode — "I ordered to BH24, any
+      // update?"). productQuery stays absent on this branch (no
+      // rule shortcut fires for product intent).
+      const postcode =
+        intentRule.rule.intent === 'logistics'
+          ? (extractPostcode(query.text) ?? undefined)
+          : undefined;
       base = {
         intent: intentRule.rule.intent,
         confidence: 1.0,
         rationale: `matched pattern: ${intentRule.rule.name}`,
         matched: 'rule',
+        ...(postcode !== undefined ? { postcode } : {}),
       };
     } else {
       const llm = await (this.openaiBreaker
@@ -61,12 +75,20 @@ export class HybridRouter implements Router {
         llm.intent === 'product'
           ? (llm.productQuery ?? extractProductQuery(query.text) ?? undefined)
           : undefined;
+      // Sprint 4: symmetric with productQuery. Rule-based only for now
+      // (the classifier doesn't emit a postcode field). Extraction is
+      // permissive; the tool owns normalisation and district lookup.
+      const postcode =
+        llm.intent === 'logistics'
+          ? (extractPostcode(query.text) ?? undefined)
+          : undefined;
       base = {
         intent: llm.intent,
         confidence: llm.confidence,
         rationale: llm.rationale,
         matched: 'llm',
         ...(productQuery !== undefined ? { productQuery } : {}),
+        ...(postcode !== undefined ? { postcode } : {}),
       };
     }
 

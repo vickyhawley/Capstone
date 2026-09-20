@@ -34,10 +34,11 @@ export {
   type DeliveryZoneStatus,
   type DistrictEntry,
 } from './tool-registry/delivery-zone-tool.js';
-export { extractProductQuery } from './router/rules.js';
+export { extractPostcode, extractProductQuery } from './router/rules.js';
 export { StubTraceSink } from './trace-sink/stub-trace-sink.js';
 export { SupabaseTraceSink } from './trace-sink/supabase-trace-sink.js';
 export { NoopPlanner } from './planner/noop-planner.js';
+export { RouteBasedPlanner } from './planner/route-based-planner.js';
 export { StubCatalogueRepository } from './catalogue-repository/stub-catalogue-repository.js';
 export { NoopReranker } from './reranker/noop-reranker.js';
 
