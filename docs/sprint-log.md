@@ -3401,3 +3401,98 @@ case-044 handle-match analysis, and the 15/16 baseline all stand.
 The hydration fix is a purely additive quality improvement —
 `matchedHandle`/`matchedTitle` now surface correctly on the API
 response for downstream synthesis, but no closed number moved.
+
+### GW-21 shipped — delivery zone landed, 2/2 smoke pass (2026-09-18)
+
+Third of the four freeze-scoped stories. Same ship-story-run-
+smoke-record-finding-move-on discipline as GW-19. No new ADR:
+the design rationale lives in the tool's file header and
+`data/guides/delivery.md` is already the source of truth on the
+20-mile radius policy.
+
+**What landed:**
+
+- `DeliveryZoneTool` (`packages/adapters/src/tool-registry/
+  delivery-zone-tool.ts`). Takes a `readonly DistrictEntry[]` +
+  `postcode`. Extracts the outward code, looks it up in the
+  curated district list, returns two states: `within_radius` (in
+  the list AND flagged `within_radius: true`) or `defer_to_staff`
+  (everything else — beyond radius, unknown, unparseable). 15
+  unit tests.
+- `data/delivery-districts.yaml`. 14 curated postcode districts
+  around Ringwood, mirroring the road-distance approximations in
+  `scripts/generate_orders.py::DISTRICTS`. Loaded once at
+  composition root; a malformed entry surfaces as a deps-build
+  error, not a per-request error.
+- `defaultAnswerDeps` wires `deliveryZoneTool` into the
+  `CompositeToolRegistry` alongside stock and substitute. Full
+  Tier-1 route-based dispatch (ADR-0014) still deferred — same
+  pattern as GW-19: registry sees the tool, but NoopPlanner never
+  dispatches. Smoke validates the tool directly against goldens.
+- `EvalCase.expected_postcode: str | None` and
+  `EvalCase.expected_delivery_zone: DeliveryZoneStatus | None` on
+  Pydantic schema. Populated for cases 031 (SO22 →
+  `defer_to_staff`) and 051 (BH24 → `within_radius`, added).
+- `delivery_zone_correct` metric. Descriptive-first. 1.0 iff the
+  response's `delivery_zone_status` matches the case's expected
+  status; n/a when unlabelled. Registered in `METRICS` and
+  `HIGHER_IS_BETTER`.
+- One-phase smoke script (`smoke-delivery-zone.ts`). Validation
+  only. No Supabase / OpenAI dependency — the tool is a pure
+  lookup, runs in <1s locally.
+
+**Baseline (2026-09-18):**
+
+Two scored cases; both pass.
+
+```
+PASS  logistics-031  SO22 → defer_to_staff (Winchester, ~34 miles, beyond 20-mile ring)
+PASS  logistics-051  BH24 → within_radius  (Ringwood, ~1 mile)
+```
+
+**Design decision at spec time — recorded honestly.** Original
+proposal for unparseable input was a structured error result
+(mirroring `stock_lookup`'s empty-`productQuery` rejection).
+Reversed to `defer_to_staff` with a `reason` naming the parse
+failure. The tool's whole job is to never be the first thing to
+refuse — an unparseable postcode is very likely a real customer
+whose address didn't match the regex, and erroring here would
+trust a downstream fallback to catch what the tool itself should
+handle. Two-state design applied consistently.
+
+**Caught by unit test before smoke — recorded as a real bug.**
+First regex was `/^([A-Z]{1,2}[0-9][A-Z0-9]?)/` (left-anchored
+only). After whitespace-stripping "BH24 1AA" → "BH241AA", the
+regex greedily matches "BH24" — correct — but "TE1 9XY" →
+"TE19XY" matches "TE19" (Coventry outward), silently reclassifying
+Ringwood as elsewhere. Fixed by peeling any inward `9AA` off the
+end first, then matching the outward against a fully-anchored
+regex. The kind of failure that only surfaces on postcodes whose
+outward+inward fuse into another valid outward — worth naming so
+future postcode work has the reference.
+
+**Also discovered along the way — recorded here, NOT worked this
+sprint:**
+
+- **Districts list is a manual curated approximation.** `scripts/
+  generate_orders.py::DISTRICTS` and `data/delivery-districts.
+  yaml` are two hand-maintained copies of the same policy.
+  Unifying them behind a single loader (or generating one from
+  the other) is a Sprint-4 candidate. The guide's own admission
+  that the boundary hasn't been consistently enforced anyway
+  means precision below the curated numbers doesn't buy the
+  customer answer anything.
+- **Constructed within-radius case (051) covers the untested
+  branch.** GW-20 established the precedent (case 050 for LeMieux
+  paired the unavailable side of an out-of-scope decision that
+  had no real-traffic instance). 031 is the only real-traffic
+  boundary case; 051 is the constructed within-radius half so
+  both delivery-zone states have coverage.
+
+**Test counts:** adapter suite 153 (was 138, +15 for delivery-
+zone tool); Python suite 112 (was 107, +5 for delivery-zone
+metric).
+
+**Sprint 3 remaining:** GW-23 circuit breaker. GW-24 model
+tiering opportunistically.
+
