@@ -1,0 +1,45 @@
+.header {
+  border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  padding-block: 1rem;
+  margin-block-end: 1.5rem;
+}
+
+.titleRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.title {
+  font-size: 1.5rem;
+  margin: 0;
+  line-height: 1.1;
+}
+
+.subtitle {
+  font-size: 0.875rem;
+  margin: 0.25rem 0 0;
+  color: color-mix(in srgb, currentColor 70%, transparent);
+}
+
+.aboutButton {
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.5rem 0.875rem;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.aboutButton:hover {
+  background: color-mix(in srgb, currentColor 5%, transparent);
+}
+
+.aboutButton:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}

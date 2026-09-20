@@ -5,7 +5,17 @@
     "jsx": "react-jsx",
     "types": ["vite/client"],
     "noEmit": true,
-    "useDefineForClassFields": true
+    "useDefineForClassFields": true,
+    // Vite's CSS modules type is `Record<string, string>`. The base
+    // rule `noPropertyAccessFromIndexSignature` exists to catch
+    // typo-prone data access on API/config objects, but forcing
+    // `styles['bubble']` over `styles.bubble` on every className
+    // reference adds noise without protection (a missing CSS class
+    // is a runtime style-not-applied bug, not a type-safety issue,
+    // and typed-css-modules generation is Sprint 4+ scope). The
+    // sibling rule `noUncheckedIndexedAccess` stays on, so a missing
+    // key still surfaces as `string | undefined`.
+    "noPropertyAccessFromIndexSignature": false
   },
   "include": ["src/**/*", "vite.config.ts"],
   "exclude": ["dist", "node_modules"]

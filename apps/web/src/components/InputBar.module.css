@@ -1,0 +1,57 @@
+.form {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  background: color-mix(in srgb, currentColor 2%, transparent);
+}
+
+.textarea {
+  flex: 1 1 auto;
+  font: inherit;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  resize: vertical;
+  min-height: 2.75rem;
+  max-height: 8rem;
+}
+
+.textarea:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -1px;
+  border-color: currentColor;
+}
+
+.textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sendButton {
+  font: inherit;
+  padding: 0 1.25rem;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: currentColor;
+  color: canvas;
+  cursor: pointer;
+  align-self: stretch;
+  font-weight: 500;
+}
+
+.sendButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sendButton:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.sendButton:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
