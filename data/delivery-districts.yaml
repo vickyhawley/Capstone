@@ -1,0 +1,96 @@
+# NFCS delivery districts — data for GW-21 delivery zone tool.
+#
+# What this is: the outward postcode districts NFCS delivers to,
+# plus their approximate road distance from the shop (Ringwood, near
+# Jubilee Park). Postcode lookup returns:
+#   - within_radius: true  → the tool says confident yes.
+#   - within_radius: false → the tool defers to staff.
+# Not in the list → the tool defers to staff.
+#
+# See data/guides/delivery.md for the customer-facing policy. The
+# guide's own text: "near the boundary or beyond — do not refuse.
+# Route to staff. The assistant must not be the first thing to
+# enforce it." Two states, not three; there is no `confident_no`.
+#
+# Provenance: mirrors scripts/generate_orders.py::DISTRICTS. Road
+# distances are curated approximations, not survey data. Unified
+# source of truth is a Sprint-4 refactor (post-capstone roadmap).
+# Keep the two files in sync until then.
+#
+# Editing:
+# - Adding a district: coordinate with the SME first. If NFCS starts
+#   delivering to a new area, add it here with an approximate road
+#   distance and within_radius flag.
+# - Removing: same.
+# - Additions are curation, not code. Loaded at process start.
+
+districts:
+  - postcode: BH24
+    locality: Ringwood
+    distance_miles: 1
+    within_radius: true
+
+  - postcode: BH31
+    locality: Verwood
+    distance_miles: 6
+    within_radius: true
+
+  - postcode: BH21
+    locality: Wimborne
+    distance_miles: 11
+    within_radius: true
+
+  - postcode: BH23
+    locality: Christchurch
+    distance_miles: 10
+    within_radius: true
+
+  - postcode: BH25
+    locality: New Milton
+    distance_miles: 12
+    within_radius: true
+
+  - postcode: SO41
+    locality: Lymington
+    distance_miles: 15
+    within_radius: true
+
+  - postcode: SO42
+    locality: Brockenhurst
+    distance_miles: 12
+    within_radius: true
+
+  - postcode: SO43
+    locality: Lyndhurst
+    distance_miles: 14
+    within_radius: true
+
+  - postcode: SO40
+    locality: Totton
+    distance_miles: 19
+    within_radius: true
+
+  - postcode: BH15
+    locality: Poole
+    distance_miles: 17
+    within_radius: true
+
+  - postcode: SP6
+    locality: Fordingbridge
+    distance_miles: 7
+    within_radius: true
+
+  - postcode: SO51
+    locality: Romsey
+    distance_miles: 26
+    within_radius: false
+
+  - postcode: DT11
+    locality: Blandford
+    distance_miles: 31
+    within_radius: false
+
+  - postcode: SO22
+    locality: Winchester
+    distance_miles: 34
+    within_radius: false

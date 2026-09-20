@@ -26,6 +26,14 @@ export {
   type SubstituteLookupResult,
   type SubstituteAttributeAgreement,
 } from './tool-registry/product-substitute-lookup-tool.js';
+export {
+  DeliveryZoneTool,
+  extractOutwardCode,
+  loadDeliveryDistricts,
+  type DeliveryZoneResult,
+  type DeliveryZoneStatus,
+  type DistrictEntry,
+} from './tool-registry/delivery-zone-tool.js';
 export { extractProductQuery } from './router/rules.js';
 export { StubTraceSink } from './trace-sink/stub-trace-sink.js';
 export { SupabaseTraceSink } from './trace-sink/supabase-trace-sink.js';

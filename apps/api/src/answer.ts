@@ -19,6 +19,7 @@
 
 import {
   CompositeToolRegistry,
+  DeliveryZoneTool,
   HybridRetriever,
   HybridRouter,
   NoopPlanner,
@@ -28,6 +29,7 @@ import {
   ProductSubstituteLookupTool,
   RulesSafetyGate,
   SupabaseTraceSink,
+  loadDeliveryDistricts,
   loadStatusOverrideList,
   rrf,
 } from '@groundwork/adapters';
@@ -233,16 +235,27 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
   const outOfScopePath =
     process.env['STOCK_LOOKUP_OUT_OF_SCOPE_PATH'] ?? 'data/nfcs-out-of-scope.yaml';
   const pendingPath = process.env['STOCK_LOOKUP_PENDING_PATH'] ?? 'data/nfcs-pending.yaml';
-  const [outOfScope, pending] = await Promise.all([
+  const districtsPath =
+    process.env['DELIVERY_DISTRICTS_PATH'] ?? 'data/delivery-districts.yaml';
+  const [outOfScope, pending, districts] = await Promise.all([
     loadStatusOverrideList(outOfScopePath),
     loadStatusOverrideList(pendingPath),
+    loadDeliveryDistricts(districtsPath),
   ]);
   const stockLookupTool = new ProductStockLookupTool(retriever, dense, outOfScope, pending);
   // GW-19: substitute lookup runs after stock_lookup when the loop
   // dispatches non-exact results. Shares the dense retriever with
   // stock_lookup — same product corpus, same embedding model.
   const substituteLookupTool = new ProductSubstituteLookupTool(dense);
-  const toolRegistry = new CompositeToolRegistry([stockLookupTool, substituteLookupTool]);
+  // GW-21: delivery zone runs on logistics-intent postcode queries.
+  // Two states (within_radius / defer_to_staff) per the guide's
+  // "never refuse" rule.
+  const deliveryZoneTool = new DeliveryZoneTool(districts);
+  const toolRegistry = new CompositeToolRegistry([
+    stockLookupTool,
+    substituteLookupTool,
+    deliveryZoneTool,
+  ]);
 
   return {
     router: new HybridRouter(openai),

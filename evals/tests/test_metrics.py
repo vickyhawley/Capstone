@@ -4,6 +4,7 @@ from groundwork_evals.metrics import (
     aggregate,
     correct_abstention,
     correct_behavior_dispatch,
+    delivery_zone_correct,
     false_refusal,
     groundedness,
     intent_classification_accuracy,
@@ -549,4 +550,72 @@ def test_substitute_not_applicable_when_case_unlabelled():
     case = _answer_case()  # no expected_substitute_handle
     resp = ApiResponse(substitute_handles=["anything"])
     r = substitute_offered_correct(case, resp)
+    assert r.applicable is False
+
+
+# ---------- delivery_zone_correct (GW-21) ----------
+
+
+def test_delivery_zone_correct_when_within_radius_matches():
+    case = _answer_case(
+        intent="logistics",
+        expected_postcode="BH24",
+        expected_delivery_zone="within_radius",
+    )
+    resp = ApiResponse(delivery_zone_status="within_radius")
+    r = delivery_zone_correct(case, resp)
+    assert r.score == 1.0
+    assert r.applicable is True
+
+
+def test_delivery_zone_correct_when_defer_to_staff_matches():
+    case = _answer_case(
+        intent="logistics",
+        expected_postcode="SO22",
+        expected_delivery_zone="defer_to_staff",
+    )
+    resp = ApiResponse(delivery_zone_status="defer_to_staff")
+    r = delivery_zone_correct(case, resp)
+    assert r.score == 1.0
+    assert r.applicable is True
+
+
+def test_delivery_zone_wrong_when_status_mismatches():
+    # Expected within_radius, tool returned defer_to_staff. This is the
+    # over-refusal failure the guide's "never refuse" rule exists to
+    # prevent — worth naming clearly in the metric reason.
+    case = _answer_case(
+        intent="logistics",
+        expected_postcode="BH24",
+        expected_delivery_zone="within_radius",
+    )
+    resp = ApiResponse(delivery_zone_status="defer_to_staff")
+    r = delivery_zone_correct(case, resp)
+    assert r.score == 0.0
+    assert r.applicable is True
+    assert "within_radius" in r.reason
+    assert "defer_to_staff" in r.reason
+
+
+def test_delivery_zone_wrong_when_tool_did_not_run():
+    # Case is labelled but the tool loop didn't dispatch. Applicable
+    # (the case demands an answer) but scores 0 with a clear reason.
+    case = _answer_case(
+        intent="logistics",
+        expected_postcode="SO22",
+        expected_delivery_zone="defer_to_staff",
+    )
+    resp = ApiResponse()  # delivery_zone_status defaults to None
+    r = delivery_zone_correct(case, resp)
+    assert r.score == 0.0
+    assert r.applicable is True
+    assert "did not run" in r.reason
+
+
+def test_delivery_zone_not_applicable_when_case_unlabelled():
+    # Non-logistics case has no delivery-zone expectation. Metric
+    # skips rather than measures.
+    case = _answer_case()  # no expected_postcode / expected_delivery_zone
+    resp = ApiResponse(delivery_zone_status="within_radius")
+    r = delivery_zone_correct(case, resp)
     assert r.applicable is False

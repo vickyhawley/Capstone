@@ -34,6 +34,12 @@ EscalationTarget = Literal["vet", "staff-service", "staff-order"]
 # the current source of truth on shape.
 StockStatus = Literal["exact", "orderable", "pending", "unavailable"]
 
+# GW-21 (2026-09-18) — two states per data/guides/delivery.md. There
+# is no `confident_no`: the guide's "never refuse; route to staff"
+# rule collapses out-of-radius and unknown-postcode into one honest
+# state.
+DeliveryZoneStatus = Literal["within_radius", "defer_to_staff"]
+
 
 class EvalCase(BaseModel):
     """A single labelled case in an eval dataset.
@@ -75,6 +81,13 @@ class EvalCase(BaseModel):
     # up; the substitute smoke skips those. Consumed by
     # `substitute_offered_correct`.
     expected_substitute_handle: str | None = None
+    # GW-21 fields (2026-09-18) — populated for `logistics`-intent
+    # cases whose expected shape is a delivery-zone check. Both
+    # travel together: `expected_postcode` is what the tool is called
+    # with; `expected_delivery_zone` is what it should return.
+    # Consumed by `delivery_zone_correct`. Null on non-delivery cases.
+    expected_postcode: str | None = None
+    expected_delivery_zone: DeliveryZoneStatus | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -142,6 +155,10 @@ class ApiResponse(BaseModel):
     # circuited on `stockStatus: 'exact'`) or when the tool didn't
     # run for this turn. Consumed by `substitute_offered_correct`.
     substitute_handles: list[str] = Field(default_factory=list)
+    # GW-21 field (2026-09-18) — populated by the tool loop when it
+    # dispatches `logistics.delivery_zone`. Consumed by
+    # `delivery_zone_correct`.
+    delivery_zone_status: DeliveryZoneStatus | None = None
 
     model_config = {"extra": "ignore"}
 

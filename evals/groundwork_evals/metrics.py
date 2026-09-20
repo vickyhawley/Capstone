@@ -285,6 +285,41 @@ def substitute_offered_correct(case: EvalCase, response: ApiResponse) -> MetricR
     )
 
 
+# ---------- delivery zone correct (GW-21) ----------
+
+
+def delivery_zone_correct(case: EvalCase, response: ApiResponse) -> MetricResult:
+    """1.0 iff the delivery-zone tool returned the expected status for
+    the case's postcode, else 0.0.
+
+    Descriptive-first — reports what fraction of postcode-tagged
+    cases got the expected two-state answer (within_radius or
+    defer_to_staff). No threshold on the field, no gating consumer
+    without a distribution check (same discipline as `stock_status_
+    correct` and `substitute_offered_correct`).
+
+    Applicable only when the case declares both `expected_postcode`
+    and `expected_delivery_zone`. Unlabelled cases score n/a. This
+    is the two-state design applied through the eval: there is no
+    honest "confident no" state to be measuring for, per the guide.
+    """
+    if case.expected_delivery_zone is None or case.expected_postcode is None:
+        return MetricResult(
+            0.0, "n/a — case has no expected_delivery_zone/postcode", applicable=False
+        )
+    if response.delivery_zone_status is None:
+        return MetricResult(
+            0.0,
+            f"tool did not run; expected {case.expected_delivery_zone!r} for {case.expected_postcode!r}",
+        )
+    if response.delivery_zone_status == case.expected_delivery_zone:
+        return MetricResult(1.0, f"correct: {response.delivery_zone_status!r}")
+    return MetricResult(
+        0.0,
+        f"expected {case.expected_delivery_zone!r} got {response.delivery_zone_status!r}",
+    )
+
+
 # ---------- no prohibited claims (GW-12) ----------
 
 
@@ -355,6 +390,7 @@ METRICS = {
     "no_prohibited_claims": no_prohibited_claims,
     "product_query_extraction_accuracy": product_query_extraction_accuracy,
     "substitute_offered_correct": substitute_offered_correct,
+    "delivery_zone_correct": delivery_zone_correct,
 }
 
 
@@ -383,6 +419,7 @@ HIGHER_IS_BETTER = {
     "no_prohibited_claims": True,
     "product_query_extraction_accuracy": True,
     "substitute_offered_correct": True,
+    "delivery_zone_correct": True,
 }
 
 
