@@ -3496,3 +3496,121 @@ metric).
 **Sprint 3 remaining:** GW-23 circuit breaker. GW-24 model
 tiering opportunistically.
 
+### GW-23 shipped — per-dependency circuit breaker, 1/1 forced-failure test pass (2026-09-18)
+
+Fourth and final freeze-scoped story. Same ship-story-run-smoke-
+record-finding-move-on discipline as GW-19 and GW-21. Sprint 3
+closes here (GW-24 opportunistically to follow).
+
+**What landed:**
+
+- `CircuitBreaker` primitive in `packages/core/src/circuit-
+  breaker.ts`. State machine over an async fn: closed → open on
+  N consecutive failures → half-open after cooldown → closed on
+  probe-success or re-open on probe-fail. Zero external deps —
+  placed in core because the machinery is dependency-agnostic.
+  8 unit tests covering all four state transitions plus the
+  fail-fast branch and the observability `currentState()`.
+- Per-dependency wiring at composition root: two breakers named
+  `openai` and `supabase`, threshold 5, cooldown 30s. Injected
+  as optional constructor args into `HybridRouter` (wraps the
+  LLM classifier call), `PgvectorDenseRetriever` (wraps
+  `embeddings.create` + the RPC + metadata SELECT), and
+  `PgTsRankRetriever` (wraps the sparse RPC). Trace sink stays
+  uninstrumented — its port contract already makes failures
+  best-effort, and its outages silently degrade observability
+  without failing the parent request.
+- Supabase-call wrapping re-throws inside the breaker-wrapped
+  fn on `{data, error}` server errors — otherwise the breaker
+  only sees network throws and misses "server said no" as a
+  failure. This applies to both retrievers.
+- Request-boundary conversion at `/api/answer`: any throw from
+  the router or tool loop (raw or `CircuitOpenError`) converts
+  to a 200 response with `behavior: 'escalate'`, target
+  `staff-order`, and the reused escalation copy. No new enum
+  values, no bespoke response shape. New `degraded_reason`
+  field carries the underlying error text for harness slicing;
+  null on all normal responses. `intent` returns null on this
+  path rather than fabricating a classification the router
+  never made.
+- One forced-failure integration test (`answer.test.ts` — GW-23
+  section). Router-that-throws → assert 200 + escalate shape +
+  copy + degraded_reason. That's the whole smoke deliverable
+  and what goes in the demo.
+- Python `ApiResponse.degraded_reason: str | None` added so the
+  harness can read the new field. No new metric — the freeze
+  discipline says "no framework overreach"; a graceful-
+  degradation rate is a roadmap item, not scope.
+
+**Design decisions recorded honestly:**
+
+1. **Threshold + cooldown chosen for demo-legibility, not tuned.**
+   5 consecutive failures + 30s cooldown were picked so a demo
+   viewer can see the circuit open and probe again within
+   attention span, not because they were sized against
+   production traffic. Named on the composition-root comment
+   and again here. Tuning is a Sprint-4 candidate; the state
+   machine itself is production-shaped.
+
+2. **Consecutive failures, not a sliding window.** The
+   primitive counts consecutive failures rather than failures
+   in a rolling time window. A sliding window would be more
+   accurate but the extra machinery doesn't buy the customer
+   answer anything at Sprint-3 scale. Named in the file header
+   as a deliberate scope call.
+
+3. **Escalation target `staff-order` reused, not a new enum
+   value.** An infra failure isn't semantically identical to a
+   delivery-edge escalation, but the existing `staff-order`
+   copy ("The shop can check your specific case and come back
+   to you...") is honest for the degraded state and the enum
+   ripples-out (capability-profile, tag-rules, copy renderer,
+   frontend switch) if you add a new value. The user's scope
+   call explicitly said "same discipline used for tool errors
+   elsewhere in the codebase — not a bespoke shape."
+
+4. **Half-open probes ARE live requests.** No dedicated probe
+   path. Any live request can be the probe; the caller doesn't
+   know which one is. Simpler than a synthetic-probe scheme
+   and matches the common-case cost model.
+
+**Also discovered along the way — recorded here, NOT worked this
+sprint (roadmap items):**
+
+- **Retry / backoff / jitter policy.** The breaker fail-fast
+  once open; no exponential backoff or jitter on retries. If
+  the customer retries manually while the circuit is open, they
+  get the same escalate. Building a retry framework is Sprint-4
+  scope if telemetry surfaces the need.
+- **Trace emission for circuit-open events.** The breaker has
+  `currentState()` but doesn't emit spans. A circuit-open
+  event is exactly the kind of thing GW-25's trace substrate
+  should carry, but wiring it means threading the trace sink
+  into the breaker or having the request handler read
+  `currentState()` after a catch. Deferred; observable via
+  logs today.
+- **Per-tool breakers vs per-dependency breakers.** Chose
+  per-dependency because the failure modes align with the
+  underlying service, not the tool. A future degradation
+  ladder (route to staff → cached result → tool-specific
+  fallback) may want finer granularity, but nothing today
+  benefits from it.
+- **Graceful-degradation rate metric.** Now that
+  `degraded_reason` ships on the response, an eval metric
+  slicing turns by "was this degraded?" is well-typed. Deferred
+  because there's no baseline number to measure against yet
+  (no golden case is authored as "should be degraded"); it's a
+  telemetry field first.
+
+**Test counts:** core suite 77 (was 69, +8 for CircuitBreaker);
+adapter suite 153 (unchanged — wiring is optional-arg pass-
+through, no adapter-level unit tests needed for the null-breaker
+branch); api suite 38 (was 37, +1 forced-failure integration
+test); Python suite 112 (unchanged — new schema field, no new
+metric).
+
+**Sprint 3 remaining:** GW-24 model tiering opportunistically.
+The four scoped stories (handle-match check + GW-19 + GW-21 +
+GW-23) have all landed. Sprint 3 closes here regardless of
+what surfaced along the way; every follow-up above is on the
+roadmap list.
