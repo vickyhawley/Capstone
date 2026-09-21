@@ -139,12 +139,20 @@
   background: #FFFFFF;
   color: var(--color-text);
   text-decoration: none;
-  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 }
 
+/*
+ * Hover: distinct from the bubble's cream surface — a very
+ * subtle warm-white so the card lifts visually rather than
+ * disappearing into the bubble. Border stays 1px physical
+ * (no layout jitter) but a matching box-shadow rings it in
+ * gold to double the perceived weight.
+ */
 .productCard:hover {
-  background: var(--color-surface);
+  background: #FFFCF3;
   border-color: var(--color-accent-bg);
+  box-shadow: 0 0 0 1px var(--color-border), 0 4px 12px -4px rgba(184, 134, 11, 0.25);
   transform: translateY(-1px);
 }
 
