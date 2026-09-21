@@ -9,10 +9,26 @@ export interface UserMessage {
   readonly text: string;
 }
 
+/**
+ * A tool step captured mid-stream. Populated by the streaming
+ * client as tool-start / tool-complete SSE events arrive; rendered
+ * inside the empty bot bubble so the customer sees the pipeline
+ * progressing during the (typically ~700ms) window between "send"
+ * and "first answer token". Once answer text starts flowing the
+ * steps hide themselves — the evidence panel is the authoritative
+ * post-hoc record.
+ */
+export interface StreamingStep {
+  readonly name: string;
+  readonly done: boolean;
+  readonly ok?: boolean;
+}
+
 export interface BotMessage {
   readonly kind: 'bot';
   readonly id: string;
   readonly response: AnswerResponse;
+  readonly steps?: readonly StreamingStep[];
 }
 
 export interface ErrorMessage {
@@ -70,12 +86,23 @@ export function MessageBubble({ message, onRetry }: MessageBubbleProps) {
     );
   }
 
-  return <BotMessageBubble response={message.response} />;
+  return (
+    <BotMessageBubble
+      response={message.response}
+      {...(message.steps ? { steps: message.steps } : {})}
+    />
+  );
 }
 
 type FeedbackChoice = 'up' | 'down' | null;
 
-function BotMessageBubble({ response }: { readonly response: AnswerResponse }) {
+function BotMessageBubble({
+  response,
+  steps,
+}: {
+  readonly response: AnswerResponse;
+  readonly steps?: readonly StreamingStep[];
+}) {
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackChoice>(null);
   const isDegraded = response.degraded_reason != null && response.degraded_reason !== '';
@@ -83,9 +110,36 @@ function BotMessageBubble({ response }: { readonly response: AnswerResponse }) {
   const summary = summariseTools(response);
   const productLinks = response.product_links;
 
+  // Render progress steps only while the answer is still empty —
+  // once tokens start flowing, the bubble becomes the answer and
+  // the steps move to the evidence panel (via tool_calls) at done.
+  const showSteps = response.answer.length === 0 && steps && steps.length > 0;
+
   return (
     <div className={`${styles.bubble} ${styles.bot}`}>
-      <p className={styles.text}>{response.answer}</p>
+      {showSteps ? (
+        <ul className={styles.steps} aria-live="polite">
+          {steps.map((step) => (
+            <li key={step.name} className={styles.step}>
+              <span
+                className={
+                  step.done
+                    ? `${styles.stepIcon} ${styles.stepIconDone}`
+                    : `${styles.stepIcon} ${styles.stepIconRunning}`
+                }
+                aria-hidden="true"
+              >
+                {step.done ? (step.ok === false ? '✗' : '✓') : '•'}
+              </span>
+              <span className={styles.stepLabel}>
+                {labelForToolProgress(step.name, step.done)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className={styles.text}>{response.answer}</p>
+      )}
 
       {productLinks.length > 0 ? (
         <ul className={styles.productLinks} aria-label="Products mentioned">
@@ -175,8 +229,23 @@ const TOOL_LABELS: Readonly<Record<string, string>> = {
   'logistics.shop_info': 'Fetched shop info',
 };
 
+/** Present-continuous labels for in-flight tools. Same map, but
+ *  swapped to "Checking stock..." while running rather than "Checked
+ *  stock" (past tense fits the post-hoc evidence panel; present fits
+ *  the live progress list). */
+const TOOL_LABELS_RUNNING: Readonly<Record<string, string>> = {
+  'product.stock_lookup': 'Checking stock…',
+  'product.substitute_lookup': 'Looking for alternatives…',
+  'logistics.delivery_zone': 'Verifying delivery zone…',
+  'logistics.shop_info': 'Fetching shop info…',
+};
+
 function labelForTool(name: string): string {
   return TOOL_LABELS[name] ?? name;
+}
+
+function labelForToolProgress(name: string, done: boolean): string {
+  return done ? (TOOL_LABELS[name] ?? name) : (TOOL_LABELS_RUNNING[name] ?? `${name}…`);
 }
 
 function EvidencePanel({

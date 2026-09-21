@@ -4,7 +4,7 @@ import { ApiError, streamAnswer } from '../api/client.js';
 import type { AnswerResponse } from '../api/types.js';
 import styles from './Chat.module.css';
 import { InputBar } from './InputBar.js';
-import { MessageBubble, type Message } from './Message.js';
+import { MessageBubble, type Message, type StreamingStep } from './Message.js';
 
 let idCounter = 0;
 function nextId(): string {
@@ -87,34 +87,58 @@ export function Chat() {
     };
     setMessages((prev) => [...prev, { kind: 'bot', id: botId, response: placeholder }]);
 
-    // Accumulate the answer text in a ref-shaped local so we can
-    // append deltas without racing setState. Each delta triggers
-    // one setState call to append; final done event replaces the
-    // response with the full metadata.
+    // Accumulate the answer text + streaming steps in locals so we
+    // can update without racing setState. Each event triggers one
+    // setState call; final done event replaces the response with
+    // the full metadata.
     let accumulated = '';
-    const patchBot = (patch: Partial<AnswerResponse>): void => {
+    const steps: StreamingStep[] = [];
+    const patchBot = (patch: {
+      readonly response?: Partial<AnswerResponse>;
+      readonly steps?: readonly StreamingStep[];
+    }): void => {
       setMessages((prev) =>
-        prev.map((m) =>
-          m.kind === 'bot' && m.id === botId
-            ? { ...m, response: { ...m.response, ...patch } }
-            : m,
-        ),
+        prev.map((m) => {
+          if (m.kind !== 'bot' || m.id !== botId) return m;
+          return {
+            ...m,
+            ...(patch.response ? { response: { ...m.response, ...patch.response } } : {}),
+            ...(patch.steps !== undefined ? { steps: patch.steps } : {}),
+          };
+        }),
       );
     };
 
     try {
       await streamAnswer(trimmed, {
+        onToolStart: ({ name }) => {
+          steps.push({ name, done: false });
+          patchBot({ steps: [...steps] });
+        },
+        onToolComplete: ({ name, ok }) => {
+          // Match by name — no request-id yet, tools don't fire
+          // twice in one turn. Update the LAST matching step.
+          for (let i = steps.length - 1; i >= 0; i -= 1) {
+            const step = steps[i];
+            if (step && step.name === name && !step.done) {
+              steps[i] = { name, done: true, ok };
+              break;
+            }
+          }
+          patchBot({ steps: [...steps] });
+        },
         onAnswerDelta: ({ text: delta }) => {
           accumulated += delta;
-          patchBot({ answer: accumulated });
+          patchBot({ response: { answer: accumulated } });
         },
         onDone: (metadata) => {
           // Replace the response with the final metadata + the
-          // accumulated answer text. onAnswerDelta may or may not
-          // have fired (escalate/abstain paths emit one delta with
-          // the copy, degraded paths emit the escalate copy) — in
-          // all cases `accumulated` is authoritative for the text.
-          patchBot({ ...metadata, answer: accumulated });
+          // accumulated answer text. Steps get cleared — the
+          // evidence panel takes over via tool_calls.
+          patchBot({
+            response: { ...metadata, answer: accumulated },
+            steps: [],
+          });
         },
       });
     } catch (err: unknown) {

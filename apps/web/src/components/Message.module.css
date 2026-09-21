@@ -42,6 +42,77 @@
   line-height: 1.5;
 }
 
+/*
+ * Progressive tool-disclosure list. Renders inside the bot bubble
+ * during the (~700ms) window between "send" and "first answer
+ * token" — the pipeline running each Tier-1 tool. Once answer
+ * text starts flowing this hides itself and the bubble becomes
+ * the answer.
+ */
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--color-muted);
+  line-height: 1.4;
+}
+
+.stepIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 50%;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.stepIconRunning {
+  background: color-mix(in srgb, var(--color-border) 20%, transparent);
+  color: var(--color-border);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.stepIconDone {
+  background: var(--color-accent-bg);
+  color: var(--color-accent-text);
+}
+
+.stepLabel {
+  color: var(--color-text);
+  font-weight: 400;
+}
+
+.step:not(:last-child) .stepIconRunning {
+  /* If a later step has started, this one is effectively done —
+   * the pulse feels wrong. Solid state instead. */
+  animation: none;
+  opacity: 0.7;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.9);
+  }
+}
+
 .productLinks {
   list-style: none;
   padding: 0;
