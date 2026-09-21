@@ -4021,5 +4021,98 @@ safety-gate copy. Same for infra failure via GW-23 graceful-
 escalate + degraded-path tag. Four paths, all customer-
 real, all evidence-inspectable.
 
+### Shop-info tool — closing the "what is your number?" gap (2026-09-21)
+
+Fourth Sprint-4 story. Surfaced live during UI verification —
+"what is your number?" hit the router LLM's `out-of-scope`
+classification and fell through to the abstain copy ("give the
+shop a call") without giving the number. Textbook ironic
+failure: telling the customer to call while withholding the
+number to call.
+
+**Fix, three parts:**
+
+1. **Router-side shortcut.** `extractShopInfoTopic` regex in
+   `rules.ts` matches contact / hours / address / ordering
+   phrasings and returns a topic hint. `HybridRouter` treats a
+   non-null topic as a rule-shortcut — sets `intent: logistics`
+   and skips the LLM entirely. Bypasses the misclassification.
+   25 unit tests covering all four topics + non-match guards.
+2. **Shop-info tool.** New `ShopInfoTool` in
+   `packages/adapters/src/tool-registry/shop-info-tool.ts`.
+   Reads `data/nfcs-shop-info.yaml` once at composition root
+   (same loader pattern as delivery-districts). Returns the
+   full struct — phone, messaging channel, address, weekly
+   opening hours, bank-holiday policy, how-to-order lines,
+   delivery summary — on any call. The `topic` arg is a HINT
+   for observability, not a filter. 8 unit tests.
+3. **Planner dispatch.** `RouteBasedPlanner` grows one branch:
+   `logistics + shopInfoTopic + no postcode → shop_info`.
+   Priority when both postcode and topic are present: postcode
+   wins (delivery-zone answers the specific delivery question).
+   3 new planner tests + updated dispatch-table comment.
+
+**Data source honesty:** `data/nfcs-shop-info.yaml` is drawn
+from `data/guides/opening-hours.md` and `data/guides/
+delivery.md` — the SME-authored ground truth. Two fields
+marked TODO-SME: `email` (guides don't publish one) and
+`address.street` (guides confirm Ringwood + BH24 but not the
+full street address). Named in the YAML comments so the demo-
+prep pass catches them.
+
+**Scope call — no breaker for this tool.** ShopInfoTool doesn't
+hit any external service after composition-root load; failure
+modes are limited to caller-side arg validation. Consistent
+with DeliveryZoneTool's decision. Named in the composition-
+root comment.
+
+**Also discovered along the way — recorded here, NOT worked:**
+
+- **Two pre-existing type errors caught by typecheck.** Both
+  landed unnoticed in earlier Sprint-4 commits — my `pnpm
+  test` runs passed because vitest doesn't run `tsc`, only
+  `pnpm typecheck` (or `pnpm build`) does. The two: (1)
+  `RouterDecision.intent` widening in a test's `it.each` block
+  under `exactOptionalPropertyTypes`; (2) OpenAI SDK's
+  `chat.completions.create` return type is a union of
+  streaming and non-streaming responses, not narrowable across
+  the call site without explicit typing. Both fixed inside
+  this story rather than as a separate concern — the test-
+  ergonomics gap is a session-level lesson worth naming.
+- **Running `pnpm typecheck` alongside `pnpm test`.** The
+  freeze discipline names "ship the story, run the smoke, move
+  on" but the smoke doesn't include full typecheck by default.
+  A `verify` script that runs both — or a git hook — would
+  catch the shape of both errors above at commit time.
+  Sprint-4+ hygiene story.
+- **Bank-holiday nuance surfaces at synthesis-time.** The
+  shop-info YAML has a `bank_holidays` note field that the
+  synthesizer will read, but complex "are you open on Boxing
+  Day?" queries need the exception logic surfaced explicitly.
+  Not urgent — the synthesis prompt quotes the note verbatim
+  which is honest.
+- **Shop-info evidence surface.** The evidence panel in the UI
+  renders `tool_calls` names but doesn't yet render the actual
+  shop-info result contents. A "Show what I checked" click on
+  a shop-info answer today shows only "logistics.shop_info ·
+  ok · Xms". Small hardening; adds one line to the evidence
+  grid.
+
+**Test counts:** core suite 77 (unchanged); adapters 220 (was
+183, +37: +25 extractShopInfoTopic tests, +8 ShopInfoTool
+tests, +3 planner tests, +1 synthesizer test); api 47 (was 46,
++1 shop-info integration test); web 3 (unchanged); ingestion
+53 (unchanged); Python 112 (unchanged). Total 512.
+
+**What this closes:** the "call us" copy irony. A customer
+asking for the shop's number now gets the actual number.
+Alongside the four paths from the UI close-out (product-with-
+answer, logistics-with-delivery-zone, escalate/abstain,
+degraded), there's now a fifth: logistics-with-shop-info.
+The demo can pivot from "look at the trust receipts" to
+"look how quickly a customer gets a real answer to a real
+question" without a caveat.
+
+
 
 
