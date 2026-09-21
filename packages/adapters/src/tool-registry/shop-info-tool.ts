@@ -54,6 +54,13 @@ export interface ShopOpeningHours {
   readonly sunday: string;
 }
 
+export interface SubscriptionDelivery {
+  readonly description: string;
+  /** Category names matching chunk metadata.type — see attribute-
+   *  schemas in packages/core. Case-sensitive comparison. */
+  readonly eligibleTypes: readonly string[];
+}
+
 export interface ShopInfo {
   readonly phone: string;
   readonly messaging: string;
@@ -63,6 +70,7 @@ export interface ShopInfo {
   readonly bankHolidays: string;
   readonly howToOrder: readonly string[];
   readonly deliverySummary: string;
+  readonly subscriptionDelivery: SubscriptionDelivery;
 }
 
 export interface ShopInfoResult {
@@ -92,6 +100,10 @@ interface ShopInfoYamlHours {
   readonly saturday: string;
   readonly sunday: string;
 }
+interface ShopInfoYamlSubscription {
+  readonly description: string;
+  readonly eligible_types: readonly string[];
+}
 interface ShopInfoYamlFile {
   readonly phone: string;
   readonly messaging: string;
@@ -101,6 +113,7 @@ interface ShopInfoYamlFile {
   readonly bank_holidays: string;
   readonly how_to_order: readonly string[];
   readonly delivery_summary: string;
+  readonly subscription_delivery: ShopInfoYamlSubscription;
 }
 
 export class ShopInfoTool implements ToolRegistry {
@@ -185,6 +198,7 @@ export async function loadShopInfo(path: string): Promise<ShopInfo> {
     'bank_holidays',
     'how_to_order',
     'delivery_summary',
+    'subscription_delivery',
   ];
   for (const key of required) {
     if (parsed[key] === undefined || parsed[key] === null) {
@@ -196,6 +210,15 @@ export async function loadShopInfo(path: string): Promise<ShopInfo> {
   }
   if (!Array.isArray(parsed.how_to_order)) {
     throw new Error(`shop-info YAML at ${path}: how_to_order must be an array`);
+  }
+  if (
+    typeof parsed.subscription_delivery !== 'object' ||
+    typeof parsed.subscription_delivery.description !== 'string' ||
+    !Array.isArray(parsed.subscription_delivery.eligible_types)
+  ) {
+    throw new Error(
+      `shop-info YAML at ${path}: subscription_delivery must be an object with description (string) and eligible_types (array)`,
+    );
   }
   return {
     phone: parsed.phone,
@@ -218,5 +241,9 @@ export async function loadShopInfo(path: string): Promise<ShopInfo> {
     bankHolidays: parsed.bank_holidays,
     howToOrder: parsed.how_to_order,
     deliverySummary: parsed.delivery_summary,
+    subscriptionDelivery: {
+      description: parsed.subscription_delivery.description,
+      eligibleTypes: parsed.subscription_delivery.eligible_types,
+    },
   };
 }

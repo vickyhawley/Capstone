@@ -241,6 +241,12 @@ export interface StockLookupResult {
   readonly outOfScopeReason: string | null;
   readonly pendingReason: string | null;
   readonly matchScore: number | null;
+  /** Sprint 4: true when the matched product's type is in the
+   *  subscription-eligible category list (default: Feed, Bedding,
+   *  Haylage — recurring-consumption categories). Consumed by the
+   *  synthesizer to surface "we can set up a regular delivery"
+   *  when relevant. Null when no product was matched. */
+  readonly subscriptionEligible: boolean | null;
 }
 
 /**
@@ -316,6 +322,13 @@ export class ProductStockLookupTool implements ToolRegistry {
     private readonly denseRetriever: Retriever,
     private readonly outOfScope: readonly StatusOverrideEntry[],
     private readonly pending: readonly StatusOverrideEntry[] = [],
+    /** Sprint 4: product types (from chunk metadata.type — case-
+     *  sensitive) for which the shop offers a subscription-style
+     *  regular delivery. When a matched chunk's type is in this
+     *  list, the result's `subscriptionEligible` is true and the
+     *  synthesizer surfaces the option in the answer. Defaults to
+     *  empty so existing tests + fixtures don't need to opt in. */
+    private readonly subscriptionEligibleTypes: readonly string[] = [],
   ) {}
 
   list(): readonly ToolDefinition[] {
@@ -394,6 +407,9 @@ export class ProductStockLookupTool implements ToolRegistry {
         outOfScopeReason: null,
         pendingReason: null,
         matchScore: topScore,
+        subscriptionEligible: this.isSubscriptionEligible(
+          readStringMetadata(top.metadata, 'type'),
+        ),
       };
       return { ok: true, value };
     }
@@ -412,6 +428,7 @@ export class ProductStockLookupTool implements ToolRegistry {
         outOfScopeReason: scopeHit.reason,
         pendingReason: null,
         matchScore: topScore,
+        subscriptionEligible: null,
       };
       return { ok: true, value };
     }
@@ -426,12 +443,17 @@ export class ProductStockLookupTool implements ToolRegistry {
         outOfScopeReason: null,
         pendingReason: pendingHit.reason,
         matchScore: topScore,
+        subscriptionEligible: null,
       };
       return { ok: true, value };
     }
 
     // Not held, not out-of-scope, not pending → orderable.
     // NFCS's default posture — shop can source on customer request.
+    // Even orderable products in eligible categories can be
+    // subscribed to — the customer commits to future drops when the
+    // shop can source them. If retrieval matched a chunk (even
+    // without exact-shape confidence), use its type; otherwise null.
     const value: StockLookupResult = {
       status: 'orderable',
       matchedChunkIds: [],
@@ -440,8 +462,20 @@ export class ProductStockLookupTool implements ToolRegistry {
       outOfScopeReason: null,
       pendingReason: null,
       matchScore: topScore,
+      subscriptionEligible:
+        matches[0] !== undefined
+          ? this.isSubscriptionEligible(readStringMetadata(matches[0].metadata, 'type'))
+          : null,
     };
     return { ok: true, value };
+  }
+
+  /** Case-sensitive check against the configured eligible-type
+   *  list. Returns false when no match / unknown type / empty
+   *  eligible list. Never throws. */
+  private isSubscriptionEligible(type: string | null): boolean {
+    if (!type) return false;
+    return this.subscriptionEligibleTypes.includes(type);
   }
 }
 

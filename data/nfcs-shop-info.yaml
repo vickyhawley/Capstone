@@ -56,3 +56,22 @@ delivery_summary: >
   Free delivery within the 20-mile radius around Ringwood, no
   minimum order. Beyond the radius, the shop can sometimes make
   it work — call to check.
+# Subscription-style regular delivery. For consumables customers
+# reorder on a predictable rhythm (feed / bedding / haylage), the
+# shop can set up a recurring drop rather than ad-hoc calls. Only
+# these three categories today — hats, rugs, etc. are one-off.
+# The `eligible_types` list has to match the exact `type` string
+# on chunk metadata (see packages/core/src/attribute-schemas/*.ts —
+# Feed, Bedding, Haylage). Adding a fourth type here + a matching
+# attribute schema is a one-file change.
+subscription_delivery:
+  description: >
+    For products you get through on a regular rhythm — feed,
+    bedding, haylage — the shop can set up a recurring delivery
+    on whatever schedule suits you (weekly, fortnightly, monthly).
+    Skip a drop by messaging the day before; pause anytime. No
+    minimum, no lock-in.
+  eligible_types:
+    - Feed
+    - Bedding
+    - Haylage

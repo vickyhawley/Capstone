@@ -140,6 +140,57 @@ describe('renderToolFindings', () => {
     expect(text).toContain('topic=contact');
   });
 
+  it('flags subscriptionEligible=true in stock_lookup findings; drops false/null', () => {
+    const withFlag = renderToolFindings([
+      makeToolRecord(
+        'product.stock_lookup',
+        true,
+        {
+          status: 'exact',
+          matchedTitle: 'Coarse Mix',
+          subscriptionEligible: true,
+        },
+      ),
+    ]);
+    expect(withFlag).toContain('subscriptionEligible=true');
+
+    const withoutFlag = renderToolFindings([
+      makeToolRecord(
+        'product.stock_lookup',
+        true,
+        {
+          status: 'exact',
+          matchedTitle: 'Wax Jacket',
+          subscriptionEligible: false,
+        },
+      ),
+    ]);
+    expect(withoutFlag).not.toContain('subscriptionEligible');
+  });
+
+  it('includes subscriptionDelivery in shop_info findings when present', () => {
+    const text = renderToolFindings([
+      makeToolRecord(
+        'logistics.shop_info',
+        true,
+        {
+          topic: 'ordering',
+          info: {
+            phone: '01425 201301',
+            howToOrder: ['Phone', 'WhatsApp'],
+            subscriptionDelivery: {
+              description: 'Regular delivery for feed / bedding / haylage',
+              eligibleTypes: ['Feed', 'Bedding', 'Haylage'],
+            },
+          },
+        },
+      ),
+    ]);
+    expect(text).toContain('subscriptionDelivery');
+    expect(text).toContain('Feed');
+    expect(text).toContain('Regular delivery');
+  });
+
   it('flags failed tool results without hiding them', () => {
     const text = renderToolFindings([
       makeToolRecord('product.stock_lookup', false, 'supabase RPC error', { productQuery: 'X' }),

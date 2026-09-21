@@ -35,6 +35,10 @@ const FIXTURE: ShopInfo = {
   bankHolidays: 'Open on bank holidays',
   howToOrder: ['Phone during hours', 'WhatsApp any time'],
   deliverySummary: 'Free within 20 miles',
+  subscriptionDelivery: {
+    description: 'Regular delivery available for feed, bedding, haylage',
+    eligibleTypes: ['Feed', 'Bedding', 'Haylage'],
+  },
 };
 
 describe('ShopInfoTool', () => {

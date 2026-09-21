@@ -532,7 +532,17 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
     loadDeliveryDistricts(districtsPath),
     loadShopInfo(shopInfoPath),
   ]);
-  const stockLookupTool = new ProductStockLookupTool(retriever, dense, outOfScope, pending);
+  // Sprint 4: subscription-eligible categories come from the shop-
+  // info YAML — single source of truth. Passed here so a matched
+  // Feed/Bedding/Haylage product flags subscriptionEligible=true and
+  // the synthesizer surfaces the regular-delivery option.
+  const stockLookupTool = new ProductStockLookupTool(
+    retriever,
+    dense,
+    outOfScope,
+    pending,
+    shopInfo.subscriptionDelivery.eligibleTypes,
+  );
   // GW-19: substitute lookup runs after stock_lookup when the loop
   // dispatches non-exact results. Shares the dense retriever with
   // stock_lookup — same product corpus, same embedding model.

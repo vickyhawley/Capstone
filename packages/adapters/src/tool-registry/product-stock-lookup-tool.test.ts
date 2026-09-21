@@ -670,4 +670,143 @@ describe('ProductStockLookupTool', () => {
       expect(value.status).toBe('orderable');
     });
   });
+
+  describe('subscriptionEligible (Sprint 4)', () => {
+    // Matches how the SME configured shop-info: Feed, Bedding,
+    // Haylage. Case-sensitive against chunk metadata.type.
+    const ELIGIBLE_TYPES = ['Feed', 'Bedding', 'Haylage'];
+
+    function makeToolWithSubscription(
+      retriever: Retriever,
+      types: readonly string[] = ELIGIBLE_TYPES,
+    ): ProductStockLookupTool {
+      return new ProductStockLookupTool(retriever, retriever, OUT_OF_SCOPE, [], types);
+    }
+
+    it('exact match on Feed type → subscriptionEligible=true', async () => {
+      const retriever = makeRetriever([
+        makeChunk({
+          score: 0.72,
+          metadata: {
+            handle: 'coarse-mix',
+            title: 'Coarse Mix',
+            type: 'Feed',
+          },
+        }),
+      ]);
+      const tool = makeToolWithSubscription(retriever);
+      const result = await tool.invoke({
+        name: 'product.stock_lookup',
+        args: { productQuery: 'Coarse Mix' },
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const value = result.value as StockLookupResult;
+      expect(value.status).toBe('exact');
+      expect(value.subscriptionEligible).toBe(true);
+    });
+
+    it('exact match on Outerwear (non-eligible) → subscriptionEligible=false', async () => {
+      const retriever = makeRetriever([
+        makeChunk({
+          score: 0.72,
+          metadata: {
+            handle: 'wax-jacket',
+            title: 'Wax Jacket',
+            type: 'Outerwear',
+          },
+        }),
+      ]);
+      const tool = makeToolWithSubscription(retriever);
+      const result = await tool.invoke({
+        name: 'product.stock_lookup',
+        args: { productQuery: 'Wax Jacket' },
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const value = result.value as StockLookupResult;
+      expect(value.status).toBe('exact');
+      expect(value.subscriptionEligible).toBe(false);
+    });
+
+    it('unavailable (out-of-scope) → subscriptionEligible=null (no product matched)', async () => {
+      const retriever = makeRetriever([]);
+      const tool = makeToolWithSubscription(retriever);
+      const result = await tool.invoke({
+        name: 'product.stock_lookup',
+        args: { productQuery: 'TestBrandA saddle' },
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const value = result.value as StockLookupResult;
+      expect(value.status).toBe('unavailable');
+      expect(value.subscriptionEligible).toBeNull();
+    });
+
+    it('orderable with retrieval hit on Bedding → subscriptionEligible=true', async () => {
+      // Non-exact orderable (cosine passes but tokens ungrounded)
+      // can still be subscription-eligible if the matched chunk's
+      // type is in the list. Customer is asking about a bedding
+      // product NFCS can source but doesn't hold — recurring
+      // delivery still makes sense.
+      const retriever = makeRetriever([
+        makeChunk({
+          score: 0.033,
+          metadata: {
+            handle: 'aubiose-hemp',
+            title: 'Aubiose Hemp Bedding',
+            type: 'Bedding',
+          },
+          text: 'Aubiose is a hemp bedding option.',
+        }),
+      ]);
+      const denseRetriever = makeRetriever([
+        makeChunk({
+          score: 0.55, // below the token-grounding path's threshold
+          metadata: {
+            handle: 'aubiose-hemp',
+            title: 'Aubiose Hemp Bedding',
+            type: 'Bedding',
+          },
+        }),
+      ]);
+      const tool = new ProductStockLookupTool(
+        retriever,
+        denseRetriever,
+        OUT_OF_SCOPE,
+        [],
+        ELIGIBLE_TYPES,
+      );
+      const result = await tool.invoke({
+        name: 'product.stock_lookup',
+        args: { productQuery: 'unknown-brand hemp bedding' },
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const value = result.value as StockLookupResult;
+      expect(value.status).toBe('orderable');
+      expect(value.subscriptionEligible).toBe(true);
+    });
+
+    it('empty eligibleTypes list → always false when matched, null otherwise', async () => {
+      const retriever = makeRetriever([
+        makeChunk({
+          score: 0.72,
+          metadata: {
+            handle: 'coarse-mix',
+            title: 'Coarse Mix',
+            type: 'Feed',
+          },
+        }),
+      ]);
+      const tool = new ProductStockLookupTool(retriever, retriever, OUT_OF_SCOPE, [], []);
+      const result = await tool.invoke({
+        name: 'product.stock_lookup',
+        args: { productQuery: 'Coarse Mix' },
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect((result.value as StockLookupResult).subscriptionEligible).toBe(false);
+    });
+  });
 });
