@@ -41,6 +41,7 @@ import type {
   ToolInvocationRecord,
 } from '@groundwork/core';
 import type OpenAI from 'openai';
+import type { ChatCompletion } from 'openai/resources/chat/completions.js';
 
 export const SYNTHESIZER_MODEL = 'gpt-4o';
 
@@ -75,10 +76,13 @@ export class OpenAiSynthesizer implements Synthesizer {
     const findingsBlock = renderToolFindings(input.toolResults);
     const userMessage = renderUserMessage(input.query.text, findingsBlock);
 
-    const call = async (): Promise<Awaited<
-      ReturnType<OpenAI['chat']['completions']['create']>
-    >> =>
-      this.openai.chat.completions.create({
+    // Explicit ChatCompletion type: `chat.completions.create`'s
+    // return type is a union of streaming and non-streaming
+    // responses, and TypeScript doesn't narrow across the
+    // stream-defaults-false call site. Non-streaming variant is
+    // what we get since `stream: true` is not set.
+    const call = async (): Promise<ChatCompletion> =>
+      (await this.openai.chat.completions.create({
         model: SYNTHESIZER_MODEL,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
@@ -86,7 +90,7 @@ export class OpenAiSynthesizer implements Synthesizer {
         ],
         temperature: 0.2,
         max_tokens: 400,
-      });
+      })) as ChatCompletion;
 
     const completion = await (this.openaiBreaker ? this.openaiBreaker.run(call) : call());
     const content = completion.choices[0]?.message?.content?.trim() ?? '';
@@ -134,6 +138,8 @@ function summariseToolValue(name: string, value: unknown): string {
       return summariseSubstituteLookup(value);
     case 'logistics.delivery_zone':
       return summariseDeliveryZone(value);
+    case 'logistics.shop_info':
+      return summariseShopInfo(value);
     default:
       // Unknown tool — round-trip the JSON so the model sees it but
       // don't pretend to understand its shape.
@@ -180,6 +186,56 @@ function summariseSubstituteLookup(value: unknown): string {
     .map((s) => `"${s.title ?? s.handle ?? '(unknown)'}"`)
     .join(', ');
   return `substitutes=[${items}]`;
+}
+
+function summariseShopInfo(value: unknown): string {
+  const v = value as
+    | {
+        readonly topic?: string | null;
+        readonly info?: {
+          readonly phone?: string;
+          readonly messaging?: string;
+          readonly email?: string | null;
+          readonly address?: {
+            readonly locality?: string;
+            readonly postcode?: string;
+            readonly street?: string | null;
+          };
+          readonly openingHours?: Readonly<Record<string, string>>;
+          readonly bankHolidays?: string;
+          readonly howToOrder?: readonly string[];
+          readonly deliverySummary?: string;
+        };
+      }
+    | null
+    | undefined;
+  if (!v || !v.info) return '(no result)';
+  const info = v.info;
+  const lines: string[] = [];
+  if (v.topic) lines.push(`topic=${v.topic}`);
+  if (info.phone) lines.push(`phone=${info.phone}`);
+  if (info.messaging) lines.push(`messaging="${info.messaging}"`);
+  if (info.email) lines.push(`email=${info.email}`);
+  if (info.address) {
+    const addrParts = [
+      info.address.street,
+      info.address.locality,
+      info.address.postcode,
+    ].filter((p): p is string => Boolean(p));
+    if (addrParts.length > 0) lines.push(`address="${addrParts.join(', ')}"`);
+  }
+  if (info.openingHours) {
+    const hours = Object.entries(info.openingHours)
+      .map(([day, h]) => `${day.slice(0, 3)} ${h}`)
+      .join('; ');
+    lines.push(`hours=[${hours}]`);
+  }
+  if (info.bankHolidays) lines.push(`bankHolidays="${info.bankHolidays}"`);
+  if (info.howToOrder && info.howToOrder.length > 0) {
+    lines.push(`howToOrder=[${info.howToOrder.map((s) => `"${s}"`).join(', ')}]`);
+  }
+  if (info.deliverySummary) lines.push(`deliverySummary="${info.deliverySummary}"`);
+  return lines.join(', ');
 }
 
 function summariseDeliveryZone(value: unknown): string {

@@ -34,7 +34,20 @@ export {
   type DeliveryZoneStatus,
   type DistrictEntry,
 } from './tool-registry/delivery-zone-tool.js';
-export { extractPostcode, extractProductQuery } from './router/rules.js';
+export {
+  ShopInfoTool,
+  loadShopInfo,
+  type ShopInfo,
+  type ShopInfoResult,
+  type ShopAddress,
+  type ShopOpeningHours,
+} from './tool-registry/shop-info-tool.js';
+export {
+  extractPostcode,
+  extractProductQuery,
+  extractShopInfoTopic,
+  type ShopInfoTopic,
+} from './router/rules.js';
 export { StubTraceSink } from './trace-sink/stub-trace-sink.js';
 export { SupabaseTraceSink } from './trace-sink/supabase-trace-sink.js';
 export { NoopPlanner } from './planner/noop-planner.js';

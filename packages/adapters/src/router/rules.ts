@@ -241,3 +241,72 @@ export function extractPostcode(query: string): string | null {
   if (!outward) return null;
   return inward ? `${outward} ${inward}` : outward;
 }
+
+// ---------- Shop-info topic extraction (Sprint 4 — logistics.shop_info) ----------
+//
+// "What is your number?" was hitting `out-of-scope` at the LLM
+// classifier because it's not obviously a product / fit / delivery
+// question. The abstain copy then said "give the shop a call"
+// without giving the number — a real UX failure.
+//
+// The extractor below catches contact / hours / address / ordering
+// phrasings and returns a topic hint. The router (see hybrid-
+// router.ts) treats a non-null topic as a signal to set intent=
+// logistics via rule-shortcut, bypassing the LLM. Downstream the
+// Tier-1 planner sees `RouterDecision.shopInfoTopic` and dispatches
+// `logistics.shop_info` with that topic.
+//
+// Topic is a HINT, not a filter — the tool returns the full struct
+// (phone, hours, address, how-to-order) and synthesis picks what's
+// relevant. Having the hint on the router decision lets the trace
+// log record why the tool fired, which matters for the "why did it
+// route this way" debug story.
+
+export type ShopInfoTopic = 'contact' | 'hours' | 'address' | 'ordering';
+
+interface ShopInfoRule {
+  readonly topic: ShopInfoTopic;
+  readonly pattern: RegExp;
+}
+
+const SHOP_INFO_RULES: readonly ShopInfoRule[] = [
+  {
+    topic: 'contact',
+    // "your number", "your phone", "how do I contact", "what's your email"
+    pattern:
+      /\b(what(?:'s|\s+is)|whats)\s+(?:the\s+shop'?s?\s+|your\s+)?(?:phone(?:\s+number)?|number|email|contact)\b|\b(?:how\s+(?:do|can)\s+i\s+)?contact(?:\s+(?:you|the\s+shop))?\b/i,
+  },
+  {
+    topic: 'hours',
+    // "when are you open", "opening times", "are you open on X",
+    // "what time do you open/close"
+    pattern:
+      /\b(?:when|what\s+(?:time|hours?|day))\s+(?:are\s+you|do\s+you|is\s+the\s+shop)?\s*(?:open|close|closing|closed|shut|shutting)\b|\bopening\s+(?:hours?|times?)\b|\bare\s+you\s+open\s+(?:on|today|tomorrow)\b/i,
+  },
+  {
+    topic: 'address',
+    // "where are you", "your address", "where is the shop", "your location"
+    pattern:
+      /\bwhere(?:'s|\s+is|\s+are)\s+(?:you|the\s+shop|the\s+store)\b|\b(?:what(?:'s|\s+is)|whats)\s+(?:your|the\s+shop'?s?)\s+(?:address|location)\b/i,
+  },
+  {
+    topic: 'ordering',
+    // "how do i order", "can i order online", "how to place an order"
+    pattern:
+      /\bhow\s+(?:do\s+i|can\s+i|to)\s+(?:place\s+(?:an\s+)?order|order|buy)\b|\bcan\s+i\s+order\s+(?:online|by\s+phone|via)\b/i,
+  },
+];
+
+/**
+ * Return the first matching shop-info topic, or null when no
+ * phrasing hits. Order matters only for overlapping matches — the
+ * four topic patterns are designed to be disjoint, but ordering
+ * pins the tiebreak deterministically for the rare compound query
+ * ("where are you and what are your hours?" → 'address' wins).
+ */
+export function extractShopInfoTopic(query: string): ShopInfoTopic | null {
+  for (const rule of SHOP_INFO_RULES) {
+    if (rule.pattern.test(query)) return rule.topic;
+  }
+  return null;
+}

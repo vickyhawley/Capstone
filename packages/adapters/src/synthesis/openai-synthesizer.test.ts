@@ -103,6 +103,43 @@ describe('renderToolFindings', () => {
     expect(text).toContain('20-mile radius');
   });
 
+  it('renders logistics.shop_info with phone, hours, address, how-to-order', () => {
+    const text = renderToolFindings([
+      makeToolRecord(
+        'logistics.shop_info',
+        true,
+        {
+          topic: 'contact',
+          info: {
+            phone: '01425 201301',
+            messaging: 'WhatsApp on the same number',
+            email: null,
+            address: { locality: 'Ringwood', postcode: 'BH24', street: null },
+            openingHours: {
+              monday: '8:30am – 6:00pm',
+              tuesday: '8:30am – 6:00pm',
+              wednesday: '8:30am – 6:00pm',
+              thursday: '8:30am – 6:00pm',
+              friday: '8:30am – 6:00pm',
+              saturday: '8:30am – 4:00pm',
+              sunday: '8:30am – 2:00pm',
+            },
+            bankHolidays: 'Open on bank holidays; Christmas/Boxing Day exceptions.',
+            howToOrder: ['Phone', 'WhatsApp'],
+            deliverySummary: 'Free within 20 miles',
+          },
+        },
+        { topic: 'contact' },
+      ),
+    ]);
+    expect(text).toContain('phone=01425 201301');
+    expect(text).toContain('Ringwood');
+    expect(text).toContain('mon 8:30am');
+    expect(text).toContain('sun 8:30am');
+    expect(text).toContain('WhatsApp');
+    expect(text).toContain('topic=contact');
+  });
+
   it('flags failed tool results without hiding them', () => {
     const text = renderToolFindings([
       makeToolRecord('product.stock_lookup', false, 'supabase RPC error', { productQuery: 'X' }),

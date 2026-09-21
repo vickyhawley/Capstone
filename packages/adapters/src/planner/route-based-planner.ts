@@ -13,13 +13,22 @@
  *
  * Dispatch table:
  *
- * | intent    | additional            | iter 0                        | iter 1 (given iter 0 result)                                          | iter 2+ |
- * |-----------|-----------------------|-------------------------------|-----------------------------------------------------------------------|---------|
- * | product   | productQuery present  | product.stock_lookup          | product.substitute_lookup if stockStatus in {orderable, unavailable}  | done    |
- * | product   | productQuery absent   | done                          | —                                                                     | —       |
- * | logistics | postcode present      | logistics.delivery_zone       | done                                                                  | —       |
- * | logistics | postcode absent       | done                          | —                                                                     | —       |
- * | anything else                      | done                          | —                                                                     | —       |
+ * | intent    | additional                        | iter 0                        | iter 1 (given iter 0 result)                                          | iter 2+ |
+ * |-----------|-----------------------------------|-------------------------------|-----------------------------------------------------------------------|---------|
+ * | product   | productQuery present              | product.stock_lookup          | product.substitute_lookup if stockStatus in {orderable, unavailable}  | done    |
+ * | product   | productQuery absent               | done                          | —                                                                     | —       |
+ * | logistics | postcode present                  | logistics.delivery_zone       | done                                                                  | —       |
+ * | logistics | shopInfoTopic set, no postcode    | logistics.shop_info           | done                                                                  | —       |
+ * | logistics | neither present                   | done                          | —                                                                     | —       |
+ * | anything else                                  | done                          | —                                                                     | —       |
+ *
+ * Priority rule for logistics with BOTH postcode and shopInfoTopic
+ * present ("what's your number for delivery to BH24?"): postcode
+ * wins. Delivery-zone answers the specific delivery question;
+ * synthesis can still surface shop contact info from the guides
+ * corpus if useful. shop_info is not dispatched in this case to
+ * avoid double-round-tripping when the user's specific ask is
+ * about delivery.
  *
  * Non-product/non-logistics intents (welfare-clinical, out-of-scope,
  * service-referral, fit) never reach this planner — the safety gate
@@ -53,6 +62,7 @@ import type {
 const TOOL_STOCK_LOOKUP = 'product.stock_lookup';
 const TOOL_SUBSTITUTE_LOOKUP = 'product.substitute_lookup';
 const TOOL_DELIVERY_ZONE = 'logistics.delivery_zone';
+const TOOL_SHOP_INFO = 'logistics.shop_info';
 
 type StockLookupValue = { readonly status: string };
 
@@ -66,6 +76,14 @@ export class RouteBasedPlanner implements Planner {
 
     if (routerDecision.intent === 'logistics' && routerDecision.postcode) {
       return this.planLogistics(routerDecision.postcode, toolResults);
+    }
+
+    if (
+      routerDecision.intent === 'logistics' &&
+      routerDecision.shopInfoTopic &&
+      !routerDecision.postcode
+    ) {
+      return this.planShopInfo(routerDecision.shopInfoTopic, toolResults);
     }
 
     return {
@@ -139,17 +157,39 @@ export class RouteBasedPlanner implements Planner {
       rationale: `Tier-1 dispatch: logistics intent with postcode '${postcode}'`,
     };
   }
+
+  private planShopInfo(
+    topic: string,
+    toolResults: readonly ToolInvocationRecord[],
+  ): PlannerDecision {
+    const shopInfoCall = toolResults.find((r) => r.call.name === TOOL_SHOP_INFO);
+    if (shopInfoCall) {
+      return { kind: 'done', rationale: 'shop_info dispatched' };
+    }
+    return {
+      kind: 'call-tool',
+      toolCall: {
+        name: TOOL_SHOP_INFO,
+        args: { topic },
+      },
+      rationale: `Tier-1 dispatch: logistics intent with shopInfoTopic '${topic}'`,
+    };
+  }
 }
 
 function reasonForNoDispatch(
   intent: string,
-  decision: { readonly productQuery?: string; readonly postcode?: string },
+  decision: {
+    readonly productQuery?: string;
+    readonly postcode?: string;
+    readonly shopInfoTopic?: string;
+  },
 ): string {
   if (intent === 'product' && !decision.productQuery) {
     return 'product intent but no productQuery extracted; nothing to dispatch';
   }
-  if (intent === 'logistics' && !decision.postcode) {
-    return 'logistics intent but no postcode extracted; nothing to dispatch';
+  if (intent === 'logistics' && !decision.postcode && !decision.shopInfoTopic) {
+    return 'logistics intent but no postcode or shopInfoTopic extracted; nothing to dispatch';
   }
   return `intent '${intent}' has no Tier-1 tool dispatch`;
 }

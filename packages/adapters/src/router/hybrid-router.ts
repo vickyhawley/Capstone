@@ -1,18 +1,24 @@
 /**
  * HybridRouter — the composed router. ADR-0010.
  *
- * Three layers, in order:
+ * Four layers, in order:
  *   1. Safety-signal rules — record `adversarialSuspected` and the
  *      pattern that matched. Do NOT set intent.
  *   2. Intent-shortcut rules — set intent for service-referral or
  *      order-status shapes. If hit, skip the LLM.
- *   3. LLM classifier — describes the underlying intent. Runs
+ *   3. Shop-info topic extractor (Sprint 4) — if the query matches
+ *      a contact / hours / address / ordering phrasing, force
+ *      intent=logistics via rule-shortcut style. The LLM was
+ *      classifying "what is your number?" as out-of-scope, which
+ *      then abstained ironically. This layer catches those
+ *      phrasings BEFORE the LLM sees them.
+ *   4. LLM classifier — describes the underlying intent. Runs
  *      regardless of whether the safety layer fired, and its
  *      classification stands even when adversarialSuspected is true
  *      (the fit-with-injection case; ADR-0010 amendment 1).
  *
  * The safety signal always attaches to the final decision, whether
- * intent was set by an intent-shortcut rule or by the LLM.
+ * intent was set by rule, shop-info extractor, or LLM.
  */
 
 import type { CircuitBreaker, Router, RouterDecision, RouterQuery } from '@groundwork/core';
@@ -22,6 +28,7 @@ import { classifyWithLLM } from './llm-classifier.js';
 import {
   extractPostcode,
   extractProductQuery,
+  extractShopInfoTopic,
   matchIntentRule,
   matchSafetyRule,
 } from './rules.js';
@@ -64,6 +71,26 @@ export class HybridRouter implements Router {
         matched: 'rule',
         ...(postcode !== undefined ? { postcode } : {}),
       };
+    } else if (extractShopInfoTopic(query.text)) {
+      // Sprint 4 shop-info shortcut. Force intent=logistics + set
+      // the topic. Bypasses the LLM entirely, which was
+      // misclassifying these as out-of-scope.
+      const shopInfoTopic = extractShopInfoTopic(query.text);
+      // Non-null: we just checked. TypeScript narrowing across the
+      // else-if doesn't reach here, so re-assert.
+      if (!shopInfoTopic) throw new Error('unreachable');
+      // Even shop-info-shaped queries can carry a postcode ("what's
+      // your number for delivery to BH24?"). Extract if present so
+      // the planner can decide priority.
+      const postcode = extractPostcode(query.text) ?? undefined;
+      base = {
+        intent: 'logistics',
+        confidence: 1.0,
+        rationale: `matched shop-info topic: ${shopInfoTopic}`,
+        matched: 'rule',
+        shopInfoTopic,
+        ...(postcode !== undefined ? { postcode } : {}),
+      };
     } else {
       const llm = await (this.openaiBreaker
         ? this.openaiBreaker.run(() => classifyWithLLM(this.openai, query.text))
@@ -82,6 +109,15 @@ export class HybridRouter implements Router {
         llm.intent === 'logistics'
           ? (extractPostcode(query.text) ?? undefined)
           : undefined;
+      // Defence-in-depth on logistics intent: if the LLM correctly
+      // classified but the query is a shop-info topic, populate the
+      // hint so the planner can dispatch shop_info. The shortcut
+      // above handles the pre-LLM case; this handles the LLM-agrees
+      // case.
+      const shopInfoTopic =
+        llm.intent === 'logistics'
+          ? (extractShopInfoTopic(query.text) ?? undefined)
+          : undefined;
       base = {
         intent: llm.intent,
         confidence: llm.confidence,
@@ -89,6 +125,7 @@ export class HybridRouter implements Router {
         matched: 'llm',
         ...(productQuery !== undefined ? { productQuery } : {}),
         ...(postcode !== undefined ? { postcode } : {}),
+        ...(shopInfoTopic !== undefined ? { shopInfoTopic } : {}),
       };
     }
 

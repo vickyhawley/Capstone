@@ -20,6 +20,7 @@ import {
   SAFETY_RULES,
   extractPostcode,
   extractProductQuery,
+  extractShopInfoTopic,
   matchIntentRule,
   matchSafetyRule,
 } from './rules.js';
@@ -239,6 +240,83 @@ describe('router rules layer', () => {
 
     it('handles standalone outward within a sentence', () => {
       expect(extractPostcode('I live in the SO22 area')).toBe('SO22');
+    });
+  });
+
+  describe('extractShopInfoTopic — rule-based topic extraction (Sprint 4)', () => {
+    describe('contact', () => {
+      const hits = [
+        'what is your number',
+        "what's your phone number",
+        'whats your phone',
+        'how do i contact you',
+        'how can i contact the shop',
+        'what is your email',
+      ];
+      for (const q of hits) {
+        it(`matches: "${q}"`, () => {
+          expect(extractShopInfoTopic(q)).toBe('contact');
+        });
+      }
+    });
+
+    describe('hours', () => {
+      const hits = [
+        'when are you open',
+        'what are your opening hours',
+        'what time do you open',
+        'what time do you close',
+        'opening times',
+        'are you open on sunday',
+        'are you open today',
+      ];
+      for (const q of hits) {
+        it(`matches: "${q}"`, () => {
+          expect(extractShopInfoTopic(q)).toBe('hours');
+        });
+      }
+    });
+
+    describe('address', () => {
+      const hits = [
+        'where are you',
+        'where is the shop',
+        'what is your address',
+        "what's your location",
+      ];
+      for (const q of hits) {
+        it(`matches: "${q}"`, () => {
+          expect(extractShopInfoTopic(q)).toBe('address');
+        });
+      }
+    });
+
+    describe('ordering', () => {
+      const hits = [
+        'how do i order',
+        'how do i place an order',
+        'how to place an order',
+        'can i order online',
+      ];
+      for (const q of hits) {
+        it(`matches: "${q}"`, () => {
+          expect(extractShopInfoTopic(q)).toBe('ordering');
+        });
+      }
+    });
+
+    describe('no match', () => {
+      const misses = [
+        'do you stock hay',
+        'my horse has colic',
+        'is there a minimum delivery',
+        'hi',
+      ];
+      for (const q of misses) {
+        it(`does not match: "${q}"`, () => {
+          expect(extractShopInfoTopic(q)).toBeNull();
+        });
+      }
     });
   });
 });

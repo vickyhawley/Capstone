@@ -37,8 +37,10 @@ import {
   ProductSubstituteLookupTool,
   RouteBasedPlanner,
   RulesSafetyGate,
+  ShopInfoTool,
   SupabaseTraceSink,
   loadDeliveryDistricts,
+  loadShopInfo,
   loadStatusOverrideList,
   rrf,
 } from '@groundwork/adapters';
@@ -410,10 +412,12 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
   const pendingPath = process.env['STOCK_LOOKUP_PENDING_PATH'] ?? 'data/nfcs-pending.yaml';
   const districtsPath =
     process.env['DELIVERY_DISTRICTS_PATH'] ?? 'data/delivery-districts.yaml';
-  const [outOfScope, pending, districts] = await Promise.all([
+  const shopInfoPath = process.env['SHOP_INFO_PATH'] ?? 'data/nfcs-shop-info.yaml';
+  const [outOfScope, pending, districts, shopInfo] = await Promise.all([
     loadStatusOverrideList(outOfScopePath),
     loadStatusOverrideList(pendingPath),
     loadDeliveryDistricts(districtsPath),
+    loadShopInfo(shopInfoPath),
   ]);
   const stockLookupTool = new ProductStockLookupTool(retriever, dense, outOfScope, pending);
   // GW-19: substitute lookup runs after stock_lookup when the loop
@@ -424,10 +428,15 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
   // Two states (within_radius / defer_to_staff) per the guide's
   // "never refuse" rule.
   const deliveryZoneTool = new DeliveryZoneTool(districts);
+  // Sprint 4: shop info fires when the customer asks contact /
+  // hours / address / ordering questions. No breaker — pure YAML
+  // read, no external service to fail after composition-root load.
+  const shopInfoTool = new ShopInfoTool(shopInfo);
   const toolRegistry = new CompositeToolRegistry([
     stockLookupTool,
     substituteLookupTool,
     deliveryZoneTool,
+    shopInfoTool,
   ]);
 
   return {

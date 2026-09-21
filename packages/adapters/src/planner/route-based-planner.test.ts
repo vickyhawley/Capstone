@@ -22,6 +22,7 @@ function makeContext(
     readonly intent?: RouterDecision['intent'];
     readonly productQuery?: string;
     readonly postcode?: string;
+    readonly shopInfoTopic?: RouterDecision['shopInfoTopic'];
     readonly toolResults?: readonly ToolInvocationRecord[];
   } = {},
 ): PlannerContext {
@@ -33,6 +34,7 @@ function makeContext(
     adversarialSuspected: false,
     ...(overrides.productQuery !== undefined ? { productQuery: overrides.productQuery } : {}),
     ...(overrides.postcode !== undefined ? { postcode: overrides.postcode } : {}),
+    ...(overrides.shopInfoTopic !== undefined ? { shopInfoTopic: overrides.shopInfoTopic } : {}),
   };
   return {
     query: { text: 'test query' },
@@ -183,18 +185,58 @@ describe('RouteBasedPlanner', () => {
       );
       expect(decision.kind).toBe('done');
     });
+
+    it('iter 0 with shopInfoTopic and no postcode: dispatches shop_info', async () => {
+      const p = new RouteBasedPlanner();
+      const decision = await p.plan(
+        makeContext({ intent: 'logistics', shopInfoTopic: 'contact' }),
+      );
+      expect(decision.kind).toBe('call-tool');
+      if (decision.kind !== 'call-tool') return;
+      expect(decision.toolCall.name).toBe('logistics.shop_info');
+      expect(decision.toolCall.args).toEqual({ topic: 'contact' });
+    });
+
+    it('postcode wins over shopInfoTopic when both present', async () => {
+      const p = new RouteBasedPlanner();
+      const decision = await p.plan(
+        makeContext({
+          intent: 'logistics',
+          postcode: 'BH24',
+          shopInfoTopic: 'contact',
+        }),
+      );
+      expect(decision.kind).toBe('call-tool');
+      if (decision.kind !== 'call-tool') return;
+      expect(decision.toolCall.name).toBe('logistics.delivery_zone');
+    });
+
+    it('iter 1 after shop_info: done (single-tool dispatch)', async () => {
+      const p = new RouteBasedPlanner();
+      const toolResults = [
+        toolRecord('logistics.shop_info', {
+          ok: true,
+          value: { topic: 'contact', info: {} },
+        }),
+      ];
+      const decision = await p.plan(
+        makeContext({ intent: 'logistics', shopInfoTopic: 'contact', toolResults }),
+      );
+      expect(decision.kind).toBe('done');
+    });
   });
 
   describe('other intents', () => {
     // These are safety-gate-short-circuited to escalate/abstain
     // before the loop even runs, but the planner has to behave
     // sanely if invoked anyway (defence-in-depth).
-    it.each([
-      ['fit'],
-      ['welfare-clinical'],
-      ['out-of-scope'],
-      ['service-referral'],
-    ] as const)('%s intent: done (no Tier-1 dispatch)', async ([intent]) => {
+    const otherIntents: readonly RouterDecision['intent'][] = [
+      'fit',
+      'welfare-clinical',
+      'out-of-scope',
+      'service-referral',
+    ];
+    it.each(otherIntents)('%s intent: done (no Tier-1 dispatch)', async (intent) => {
       const p = new RouteBasedPlanner();
       const decision = await p.plan(makeContext({ intent }));
       expect(decision.kind).toBe('done');

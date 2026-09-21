@@ -458,6 +458,60 @@ describe('POST /api/answer', () => {
     expect(synthCalled).toBe(false);
   });
 
+  it('logistics + shopInfoTopic → dispatches shop_info, synth receives it', async () => {
+    let captured: Parameters<
+      import('@groundwork/core').Synthesizer['synthesize']
+    >[0] | null = null;
+    const shopInfoRouter: Router = {
+      async route() {
+        return {
+          intent: 'logistics',
+          confidence: 1.0,
+          rationale: 'test',
+          matched: 'rule',
+          adversarialSuspected: false,
+          shopInfoTopic: 'contact',
+        };
+      },
+    };
+    const deps: AnswerDeps = {
+      router: shopInfoRouter,
+      safetyGate,
+      planner: new RouteBasedPlanner(),
+      toolRegistry: new FakeToolRegistry({
+        'logistics.shop_info': {
+          ok: true,
+          value: {
+            topic: 'contact',
+            info: {
+              phone: '01425 201301',
+              address: { locality: 'Ringwood', postcode: 'BH24', street: null },
+              openingHours: { monday: '8:30am – 6:00pm' },
+              howToOrder: ['Phone during hours'],
+            },
+          },
+        },
+      }),
+      traceSink: new StubTraceSink(),
+      synthesizer: {
+        async synthesize(input) {
+          captured = input;
+          return { answer: 'Our number is 01425 201301.' };
+        },
+      },
+    };
+    const app = createAnswerRoute(deps);
+    const res = await post(app, { query: 'what is your number' });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['behavior']).toBe('answer');
+    expect(body['answer']).toBe('Our number is 01425 201301.');
+    const toolCalls = body['tool_calls'] as Array<{ name: string }>;
+    expect(toolCalls.map((tc) => tc.name)).toEqual(['logistics.shop_info']);
+    expect(captured).not.toBeNull();
+    expect(captured!.toolResults[0]?.call.name).toBe('logistics.shop_info');
+    expect(captured!.toolResults[0]?.call.args).toEqual({ topic: 'contact' });
+  });
+
   it('synthesizer throw routes through the GW-23 graceful-escalate path', async () => {
     const deps: AnswerDeps = {
       router: productRouter('haynets'),

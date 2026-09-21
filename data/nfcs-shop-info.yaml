@@ -1,0 +1,58 @@
+# Canonical shop information for the NFCS assistant. Sprint 4.
+#
+# This file is the source-of-truth for phone / hours / address /
+# ordering info surfaced by `logistics.shop_info` — the tool that
+# fires when a customer asks "what is your number?", "when are
+# you open?", "where are you?", or "how do I order?".
+#
+# Content is drawn from data/guides/opening-hours.md and
+# data/guides/delivery.md (the SME-authored guide files that were
+# the pre-tool ground truth). Fields marked TODO-SME need
+# confirmation before the demo; they're placeholders drawn from
+# what the guides don't yet spell out.
+#
+# Renames or reformats here need matching edits in:
+#   - packages/adapters/src/tool-registry/shop-info-tool.ts
+#     (loader + response shape)
+#   - packages/adapters/src/synthesis/openai-synthesizer.ts
+#     (findings renderer)
+# See ADR-0016 §"loader pattern" for the sibling YAML pattern.
+
+phone: "01425 201301"
+# Message the shop accepts on the same number — WhatsApp / SMS.
+# Per data/guides/delivery.md §"Ordering channel": "Phone or
+# message — customers do not have to ring. WhatsApp is fine."
+messaging: "WhatsApp or SMS to the same number"
+# TODO-SME: confirm before the demo. Guides don't publish an email.
+email: null
+# Partial address — the guides confirm Ringwood + BH24. Full
+# street address is TODO-SME.
+address:
+  locality: Ringwood
+  postcode: BH24
+  street: null # TODO-SME
+opening_hours:
+  monday: "8:30am – 6:00pm"
+  tuesday: "8:30am – 6:00pm"
+  wednesday: "8:30am – 6:00pm"
+  thursday: "8:30am – 6:00pm"
+  friday: "8:30am – 6:00pm"
+  saturday: "8:30am – 4:00pm"
+  sunday: "8:30am – 2:00pm"
+# Bank-holiday policy is nuanced: shop is always open on bank
+# holidays using the day-of-week's standard hours. Christmas Day
+# and Boxing Day are the exceptions where the answer routes to
+# phone for confirmation. Kept as a note the synthesizer can
+# quote rather than a separate structured field.
+bank_holidays: >
+  Open on bank holidays using the standard hours for that day of
+  the week. Christmas Day and Boxing Day are exceptions — please
+  phone to confirm.
+how_to_order:
+  - "Phone during opening hours"
+  - "Send a WhatsApp or SMS to the same number"
+  - "No online-checkout option today; delivery is arranged when you place the order"
+delivery_summary: >
+  Free delivery within the 20-mile radius around Ringwood, no
+  minimum order. Beyond the radius, the shop can sometimes make
+  it work — call to check.
