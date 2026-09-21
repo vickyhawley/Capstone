@@ -11,6 +11,31 @@ function nextId(): string {
   return `msg-${idCounter}`;
 }
 
+// Empty-state suggestions, grouped by category. Teaches the shape
+// of the assistant in one glance. Content is drawn from the demo's
+// known-good paths (products with matching chunks, real postcodes,
+// real shop-info queries) so first-clicks always succeed.
+const EXAMPLE_CATEGORIES: readonly {
+  readonly label: string;
+  readonly queries: readonly string[];
+}[] = [
+  {
+    label: 'Products',
+    queries: [
+      'Do you stock Haygates conditioning cubes?',
+      'Do you sell hemp bedding?',
+    ],
+  },
+  {
+    label: 'Delivery',
+    queries: ['Do you deliver to BH24?', 'How much is delivery?'],
+  },
+  {
+    label: 'Contact & hours',
+    queries: ['What is your phone number?', 'When are you open on Sunday?'],
+  },
+];
+
 /**
  * Multi-turn chat area. History lives in component state; the API
  * is stateless (each POST /api/answer carries only the current
@@ -46,10 +71,22 @@ export function Chat() {
         err instanceof ApiError
           ? `Something went wrong on the server (${err.status}). Please try again.`
           : "Couldn't reach the assistant — check your connection and try again.";
-      setMessages((prev) => [...prev, { kind: 'error', id: nextId(), message: errorText }]);
+      setMessages((prev) => [
+        ...prev,
+        // Attach the failed query so the retry button can re-submit
+        // without the customer re-typing.
+        { kind: 'error', id: nextId(), message: errorText, failedQuery: trimmed },
+      ]);
     } finally {
       setPending(false);
     }
+  }
+
+  // Retry: re-submit the failed query. We don't remove the error
+  // bubble — the customer sees both the previous failure and the
+  // new attempt, which is honest.
+  function handleRetry(query: string): void {
+    void handleSubmit(query);
   }
 
   return (
@@ -57,27 +94,34 @@ export function Chat() {
       <div className={styles.history} aria-live="polite" aria-label="Conversation">
         {messages.length === 0 ? (
           <div className={styles.emptyState}>
-            <p>Ask about products, delivery, sizing, or ordering.</p>
-            <p className={styles.emptyExamples}>
-              <span>Try: </span>
-              <button
-                type="button"
-                className={styles.exampleChip}
-                onClick={() => void handleSubmit('Do you stock Haygates conditioning cubes?')}
-              >
-                Do you stock Haygates conditioning cubes?
-              </button>
-              <button
-                type="button"
-                className={styles.exampleChip}
-                onClick={() => void handleSubmit('Do you deliver to BH24?')}
-              >
-                Do you deliver to BH24?
-              </button>
+            <p className={styles.emptyHeadline}>What can I help you find?</p>
+            <p className={styles.emptySub}>
+              Products, delivery, sizing, opening hours, ordering — try one of these to start.
             </p>
+            <div className={styles.exampleCategories}>
+              {EXAMPLE_CATEGORIES.map((cat) => (
+                <div key={cat.label} className={styles.exampleCategory}>
+                  <div className={styles.exampleLabel}>{cat.label}</div>
+                  <div className={styles.exampleChipRow}>
+                    {cat.queries.map((q) => (
+                      <button
+                        key={q}
+                        type="button"
+                        className={styles.exampleChip}
+                        onClick={() => void handleSubmit(q)}
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
-          messages.map((m) => <MessageBubble key={m.id} message={m} />)
+          messages.map((m) => (
+            <MessageBubble key={m.id} message={m} onRetry={handleRetry} />
+          ))
         )}
         {pending ? (
           <div className={styles.pending} aria-label="Assistant is thinking">

@@ -69,7 +69,7 @@ describe('App — chat shell smoke', () => {
     render(<App />);
     expect(screen.getByText('Groundwork')).toBeTruthy();
     expect(screen.getByPlaceholderText('Ask something…')).toBeTruthy();
-    expect(screen.getByText(/Ask about products/)).toBeTruthy();
+    expect(screen.getByText(/What can I help you find/)).toBeTruthy();
   });
 
   it('submits a query and renders the bot response', async () => {
@@ -89,8 +89,8 @@ describe('App — chat shell smoke', () => {
     });
 
     // Evidence panel is collapsed by default — the toggle label
-    // includes the tool count as its summary.
-    expect(screen.getByRole('button', { name: /show what i checked/i })).toBeTruthy();
+    // includes the step count in customer-shaped copy.
+    expect(screen.getByRole('button', { name: /what i checked/i })).toBeTruthy();
 
     // Fetch was called with the query.
     expect(fetchMock).toHaveBeenCalledWith(
@@ -127,9 +127,11 @@ describe('App — chat shell smoke', () => {
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
     await waitFor(() => screen.getByText(CANNED_ANSWER.answer));
 
-    // Open the panel; assert the tool name shows up in the receipts.
-    fireEvent.click(screen.getByRole('button', { name: /show what i checked/i }));
-    expect(screen.getByText('product.stock_lookup')).toBeTruthy();
-    expect(screen.getByText('trace-abc')).toBeTruthy();
+    // Open the panel; assert the customer-shaped tool label
+    // renders (not the raw internal name).
+    fireEvent.click(screen.getByRole('button', { name: /what i checked/i }));
+    expect(screen.getByText(/Checked stock/)).toBeTruthy();
+    // trace_id truncated to first 8 chars for the Reference row.
+    expect(screen.getByText('trace-ab')).toBeTruthy();
   });
 });

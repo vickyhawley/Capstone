@@ -19,26 +19,32 @@ export interface ErrorMessage {
   readonly kind: 'error';
   readonly id: string;
   readonly message: string;
+  /** Populated when the failure came from a user submit — retry
+   *  re-fires this query. Absent for cold errors that have no
+   *  originating query. */
+  readonly failedQuery?: string;
 }
 
 export type Message = UserMessage | BotMessage | ErrorMessage;
 
 interface MessageBubbleProps {
   readonly message: Message;
+  /** Called when the customer clicks retry on an error bubble.
+   *  Passes the failed query string; Chat re-submits it. */
+  readonly onRetry?: (query: string) => void;
 }
 
 /**
  * Single message bubble. User messages render text plain. Bot
- * messages render the API response's `answer` copy + a collapsible
- * evidence panel showing the trust receipts (tool_calls, intent,
- * tool outputs, trace_id). Error messages render a subtle failure
- * indicator.
+ * messages render the API response's `answer` copy + product-link
+ * chips + a collapsible evidence panel (trust receipts). Error
+ * messages render a subtle failure indicator with a retry action.
  *
  * The evidence panel is collapsed by default — the customer-real
  * story is "here's the answer"; the evaluator-real story is
  * "show what I checked" one click away.
  */
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, onRetry }: MessageBubbleProps) {
   if (message.kind === 'user') {
     return (
       <div className={`${styles.bubble} ${styles.user}`}>
@@ -51,6 +57,15 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     return (
       <div className={`${styles.bubble} ${styles.error}`}>
         <p className={styles.text}>{message.message}</p>
+        {message.failedQuery && onRetry ? (
+          <button
+            type="button"
+            className={styles.retryButton}
+            onClick={() => onRetry(message.failedQuery ?? '')}
+          >
+            ↻ Retry
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -58,8 +73,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   return <BotMessageBubble response={message.response} />;
 }
 
+type FeedbackChoice = 'up' | 'down' | null;
+
 function BotMessageBubble({ response }: { readonly response: AnswerResponse }) {
   const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackChoice>(null);
   const isDegraded = response.degraded_reason != null && response.degraded_reason !== '';
   const toolCount = response.tool_calls.length;
   const summary = summariseTools(response);
@@ -103,11 +121,62 @@ function BotMessageBubble({ response }: { readonly response: AnswerResponse }) {
             degraded path
           </span>
         ) : null}
+        {/* Feedback buttons. State-only for demo (no persistence);
+         *  a real deployment wires this to a feedback endpoint /
+         *  observability system. Once clicked, buttons swap to
+         *  a compact "thanks" acknowledgement so the customer
+         *  knows their signal landed. */}
+        <div className={styles.feedback} aria-label="Was this helpful?">
+          {feedback === null ? (
+            <>
+              <button
+                type="button"
+                className={styles.feedbackButton}
+                onClick={() => setFeedback('up')}
+                aria-label="This was helpful"
+                title="This was helpful"
+              >
+                👍
+              </button>
+              <button
+                type="button"
+                className={styles.feedbackButton}
+                onClick={() => setFeedback('down')}
+                aria-label="This wasn't helpful"
+                title="This wasn't helpful"
+              >
+                👎
+              </button>
+            </>
+          ) : (
+            <span className={styles.feedbackAck}>
+              {feedback === 'up' ? 'Thanks!' : "Thanks — we'll do better."}
+            </span>
+          )}
+        </div>
       </div>
 
       {evidenceOpen ? <EvidencePanel response={response} toolCount={toolCount} /> : null}
     </div>
   );
+}
+
+/**
+ * Map internal tool identifiers to plain-English labels the
+ * customer can read. Keeping the map here (not in a shared module)
+ * because it's UI-shaped copy, not data — a tool rename in
+ * adapters/ should prompt a review of this list, not silently
+ * fall through.
+ */
+const TOOL_LABELS: Readonly<Record<string, string>> = {
+  'product.stock_lookup': 'Checked stock',
+  'product.substitute_lookup': 'Looked for alternatives',
+  'logistics.delivery_zone': 'Verified delivery zone',
+  'logistics.shop_info': 'Fetched shop info',
+};
+
+function labelForTool(name: string): string {
+  return TOOL_LABELS[name] ?? name;
 }
 
 function EvidencePanel({
@@ -120,76 +189,67 @@ function EvidencePanel({
   return (
     <div className={styles.evidence}>
       <dl className={styles.evidenceGrid}>
-        {response.intent ? (
-          <>
-            <dt>Intent</dt>
-            <dd>{response.intent}</dd>
-          </>
-        ) : null}
         {response.product_query ? (
           <>
-            <dt>Product query</dt>
+            <dt>Product</dt>
             <dd>{response.product_query}</dd>
           </>
         ) : null}
         {response.behavior !== 'answer' ? (
           <>
-            <dt>Behaviour</dt>
+            <dt>Outcome</dt>
             <dd>
-              {response.behavior}
-              {response.escalation_target ? ` → ${response.escalation_target}` : ''}
-              {response.refusal_reason ? ` (${response.refusal_reason})` : ''}
+              {response.behavior === 'escalate' ? 'Routed to staff' : 'Declined'}
+              {response.escalation_target ? ` (${response.escalation_target})` : ''}
             </dd>
           </>
         ) : null}
         {response.degraded_reason ? (
           <>
-            <dt>Degraded reason</dt>
+            <dt>System issue</dt>
             <dd className={styles.degradedReason}>{response.degraded_reason}</dd>
           </>
         ) : null}
         {response.delivery_zone_status ? (
           <>
             <dt>Delivery zone</dt>
-            <dd>{response.delivery_zone_status}</dd>
+            <dd>
+              {response.delivery_zone_status === 'within_radius'
+                ? 'Within delivery radius'
+                : 'Route to staff (edge of / outside radius)'}
+            </dd>
           </>
         ) : null}
         {response.substitute_handles.length > 0 ? (
           <>
-            <dt>Substitutes</dt>
+            <dt>Alternatives shown</dt>
             <dd>{response.substitute_handles.join(', ')}</dd>
-          </>
-        ) : null}
-        {response.product_links.length > 0 ? (
-          <>
-            <dt>Product links</dt>
-            <dd>{response.product_links.map((l) => l.handle).join(', ')}</dd>
-          </>
-        ) : null}
-        {response.trace_id ? (
-          <>
-            <dt>Trace</dt>
-            <dd className={styles.trace}>{response.trace_id}</dd>
           </>
         ) : null}
         {response.adversarial_suspected ? (
           <>
             <dt>Safety signal</dt>
-            <dd>{response.adversarial_pattern ?? 'adversarial-suspected'}</dd>
+            <dd>Suspicious input detected</dd>
+          </>
+        ) : null}
+        {response.trace_id ? (
+          <>
+            <dt>Reference</dt>
+            <dd className={styles.trace}>{response.trace_id.slice(0, 8)}</dd>
           </>
         ) : null}
       </dl>
 
       {toolCount > 0 ? (
         <>
-          <h4 className={styles.evidenceHeading}>Tools called</h4>
+          <h4 className={styles.evidenceHeading}>What I did</h4>
           <ul className={styles.toolList}>
             {response.tool_calls.map((call, i) => (
               <li key={`${call.name}-${i}`} className={styles.toolItem}>
-                <code>{call.name}</code>
-                <span className={styles.toolMeta}>
-                  {call.ok ? 'ok' : 'failed'} · {call.duration_ms}ms
+                <span className={styles.toolLabel}>
+                  {call.ok ? '✓' : '✗'} {labelForTool(call.name)}
                 </span>
+                <span className={styles.toolMeta}>{call.duration_ms}ms</span>
               </li>
             ))}
           </ul>
@@ -201,13 +261,12 @@ function EvidencePanel({
 
 /**
  * Short one-line summary for the evidence toggle button.
- * "Show what I checked · N tools" / "Show details" (no tools ran)
- * / "Show why I escalated" (behaviour non-answer).
+ * Customer-shaped label — no jargon.
  */
 function summariseTools(response: AnswerResponse): string {
-  if (response.behavior === 'escalate') return 'Show why I escalated';
-  if (response.behavior === 'abstain') return 'Show why I declined';
+  if (response.behavior === 'escalate') return 'Why I routed you to staff';
+  if (response.behavior === 'abstain') return "Why I couldn't answer";
   const n = response.tool_calls.length;
   if (n === 0) return 'Show details';
-  return `Show what I checked · ${n} tool${n === 1 ? '' : 's'}`;
+  return `What I checked · ${n} step${n === 1 ? '' : 's'}`;
 }

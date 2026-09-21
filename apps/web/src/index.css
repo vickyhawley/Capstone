@@ -15,6 +15,13 @@
   --color-muted: rgba(15, 30, 63, 0.65);
   --color-subtle: rgba(15, 30, 63, 0.12);
 
+  /* Type — sans for UI/body, serif for editorial headings. System
+   * stacks only (zero network dependency). Georgia is present on
+   * every desktop OS; Iowan Old Style is macOS system serif;
+   * "Times New Roman" is the universal fallback. */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+
   /* Trim */
   --color-border: #C9A64C;
   --color-border-muted: rgba(201, 166, 76, 0.5);
@@ -32,7 +39,7 @@
   --color-error-bg: rgba(168, 50, 50, 0.08);
   --color-error-border: rgba(168, 50, 50, 0.35);
 
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
   line-height: 1.5;
   color: var(--color-text);
   background: var(--color-bg);
@@ -47,7 +54,11 @@ body {
   padding: 1.5rem 1rem;
   background: var(--color-bg);
   color: var(--color-text);
+  /* dvh handles iOS Safari's dynamic viewport (the URL bar
+   * appearing/disappearing changes 100vh). Fallback stays 100vh
+   * for older browsers. */
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .app-shell {
@@ -55,4 +66,10 @@ body {
   margin-inline: auto;
   display: flex;
   flex-direction: column;
+}
+
+@media (max-width: 640px) {
+  body {
+    padding: 0.75rem 0.5rem;
+  }
 }
