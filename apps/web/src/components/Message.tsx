@@ -142,18 +142,27 @@ function BotMessageBubble({
       )}
 
       {productLinks.length > 0 ? (
-        <ul className={styles.productLinks} aria-label="Products mentioned">
+        <ul className={styles.productCards} aria-label="Products mentioned">
           {productLinks.map((link) => (
             <li key={link.handle}>
               <a
-                className={styles.productChip}
+                className={styles.productCard}
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                <span>{link.title ?? link.handle}</span>
-                <span aria-hidden="true" className={styles.productChipArrow}>
-                  ↗
+                <div className={styles.productCardBody}>
+                  <div className={styles.productCardTitle}>
+                    {link.title ?? link.handle}
+                  </div>
+                  {formatPrice(link.priceMin, link.priceMax) ? (
+                    <div className={styles.productCardPrice}>
+                      {formatPrice(link.priceMin, link.priceMax)}
+                    </div>
+                  ) : null}
+                </div>
+                <span className={styles.productCardCta} aria-hidden="true">
+                  View <span className={styles.productCardCtaArrow}>→</span>
                 </span>
               </a>
             </li>
@@ -326,6 +335,27 @@ function EvidencePanel({
       ) : null}
     </div>
   );
+}
+
+/**
+ * GBP price formatter — one price if min === max, range otherwise.
+ * Returns null when we have no numbers to show (product card
+ * renders without the price row in that case).
+ */
+function formatPrice(min: number | null, max: number | null): string | null {
+  if (min == null && max == null) return null;
+  const format = (n: number): string =>
+    new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: 'GBP',
+      minimumFractionDigits: n % 1 === 0 ? 0 : 2,
+      maximumFractionDigits: 2,
+    }).format(n);
+  if (min != null && max != null && min !== max) {
+    return `${format(min)} – ${format(max)}`;
+  }
+  const only = min ?? max;
+  return only == null ? null : format(only);
 }
 
 /**

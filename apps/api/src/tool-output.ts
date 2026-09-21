@@ -19,6 +19,13 @@ export interface ProductLink {
   readonly handle: string;
   readonly title: string | null;
   readonly url: string;
+  /** Price range from the ingested chunk metadata. Both null when
+   *  the tool didn't surface prices (matched=null branches on
+   *  stock_lookup, or substitute candidate without metadata). Same
+   *  value when the product has a single price variant. Formatted
+   *  on the client — the API returns raw numbers. */
+  readonly priceMin: number | null;
+  readonly priceMax: number | null;
 }
 
 export type DeliveryZoneStatus = 'within_radius' | 'defer_to_staff';
@@ -65,12 +72,21 @@ export function extractDeliveryZoneStatus(
   return null;
 }
 
+function readOptionalNumber(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
 export function extractProductLinks(
   invocations: readonly ToolInvocationLite[],
 ): readonly ProductLink[] {
   const links: ProductLink[] = [];
   const seen = new Set<string>();
-  const push = (handle: unknown, title: unknown): void => {
+  const push = (
+    handle: unknown,
+    title: unknown,
+    priceMin: unknown,
+    priceMax: unknown,
+  ): void => {
     if (typeof handle !== 'string' || handle.length === 0) return;
     if (seen.has(handle)) return;
     seen.add(handle);
@@ -78,6 +94,8 @@ export function extractProductLinks(
       handle,
       title: typeof title === 'string' && title.length > 0 ? title : null,
       url: productUrl(handle),
+      priceMin: readOptionalNumber(priceMin),
+      priceMax: readOptionalNumber(priceMax),
     });
   };
 
@@ -86,9 +104,19 @@ export function extractProductLinks(
   );
   if (stockInv) {
     const value = stockInv.result.value as
-      | { readonly matchedHandle?: unknown; readonly matchedTitle?: unknown }
+      | {
+          readonly matchedHandle?: unknown;
+          readonly matchedTitle?: unknown;
+          readonly matchedPriceMin?: unknown;
+          readonly matchedPriceMax?: unknown;
+        }
       | undefined;
-    push(value?.matchedHandle, value?.matchedTitle);
+    push(
+      value?.matchedHandle,
+      value?.matchedTitle,
+      value?.matchedPriceMin,
+      value?.matchedPriceMax,
+    );
   }
 
   const substituteInv = invocations.find(
@@ -100,13 +128,15 @@ export function extractProductLinks(
           readonly substitutes?: readonly {
             readonly handle?: unknown;
             readonly title?: unknown;
+            readonly priceMin?: unknown;
+            readonly priceMax?: unknown;
           }[];
         }
       | undefined;
     const substitutes = value?.substitutes;
     if (Array.isArray(substitutes)) {
       for (const s of substitutes) {
-        push(s?.handle, s?.title);
+        push(s?.handle, s?.title, s?.priceMin, s?.priceMax);
       }
     }
   }

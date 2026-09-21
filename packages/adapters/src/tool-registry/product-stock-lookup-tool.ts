@@ -247,6 +247,13 @@ export interface StockLookupResult {
    *  synthesizer to surface "we can set up a regular delivery"
    *  when relevant. Null when no product was matched. */
   readonly subscriptionEligible: boolean | null;
+  /** Sprint 4 (product cards): price range from the matched
+   *  chunk's metadata (populated at ingest time from Shopify's
+   *  variant prices). Both null when no product was matched or
+   *  when metadata didn't carry them. Same value when the product
+   *  has a single price variant. */
+  readonly matchedPriceMin: number | null;
+  readonly matchedPriceMax: number | null;
 }
 
 /**
@@ -410,6 +417,8 @@ export class ProductStockLookupTool implements ToolRegistry {
         subscriptionEligible: this.isSubscriptionEligible(
           readStringMetadata(top.metadata, 'type'),
         ),
+        matchedPriceMin: readNumberMetadata(top.metadata, 'price_min'),
+        matchedPriceMax: readNumberMetadata(top.metadata, 'price_max'),
       };
       return { ok: true, value };
     }
@@ -429,6 +438,8 @@ export class ProductStockLookupTool implements ToolRegistry {
         pendingReason: null,
         matchScore: topScore,
         subscriptionEligible: null,
+        matchedPriceMin: null,
+        matchedPriceMax: null,
       };
       return { ok: true, value };
     }
@@ -444,6 +455,8 @@ export class ProductStockLookupTool implements ToolRegistry {
         pendingReason: pendingHit.reason,
         matchScore: topScore,
         subscriptionEligible: null,
+        matchedPriceMin: null,
+        matchedPriceMax: null,
       };
       return { ok: true, value };
     }
@@ -466,6 +479,8 @@ export class ProductStockLookupTool implements ToolRegistry {
         matches[0] !== undefined
           ? this.isSubscriptionEligible(readStringMetadata(matches[0].metadata, 'type'))
           : null,
+      matchedPriceMin: null,
+      matchedPriceMax: null,
     };
     return { ok: true, value };
   }
@@ -564,6 +579,18 @@ function readStringMetadata(
   if (!metadata) return null;
   const value = metadata[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/** Read a numeric metadata field (e.g. price_min/price_max from
+ *  the ingestion pipeline). Returns null when absent or malformed
+ *  — same defensive shape as readStringMetadata. */
+function readNumberMetadata(
+  metadata: Readonly<Record<string, unknown>> | undefined,
+  key: string,
+): number | null {
+  if (!metadata) return null;
+  const value = metadata[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function matchOverride(

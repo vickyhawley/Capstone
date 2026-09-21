@@ -35,6 +35,8 @@ export interface ProductLink {
   readonly handle: string;
   readonly title: string | null;
   readonly url: string;
+  readonly priceMin: number | null;
+  readonly priceMax: number | null;
 }
 
 export interface AnswerResponse {

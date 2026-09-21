@@ -39,6 +39,8 @@ const CANNED_ANSWER: AnswerResponse = {
       handle: 'horsehage-timothy',
       title: 'HorseHage Timothy',
       url: 'https://newforestcountrystore.co.uk/products/horsehage-timothy',
+      priceMin: 22.5,
+      priceMax: 22.5,
     },
   ],
 };
@@ -129,7 +131,7 @@ describe('App — chat shell smoke', () => {
     );
   });
 
-  it('renders product-link chips below the bot answer', async () => {
+  it('renders product cards below the bot answer', async () => {
     render(<App />);
     fireEvent.change(screen.getByPlaceholderText('Ask something…'), {
       target: { value: 'do you sell HorseHage Timothy' },
@@ -137,13 +139,16 @@ describe('App — chat shell smoke', () => {
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
     await waitFor(() => screen.getByText(CANNED_ANSWER.answer));
 
-    // Chip renders as a link with target=_blank and the storefront URL.
-    const chip = screen.getByRole('link', { name: /HorseHage Timothy/ });
-    expect(chip.getAttribute('href')).toBe(
+    // Card renders as a link with target=_blank and the storefront URL.
+    const card = screen.getByRole('link', { name: /HorseHage Timothy/ });
+    expect(card.getAttribute('href')).toBe(
       'https://newforestcountrystore.co.uk/products/horsehage-timothy',
     );
-    expect(chip.getAttribute('target')).toBe('_blank');
-    expect(chip.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(card.getAttribute('target')).toBe('_blank');
+    expect(card.getAttribute('rel')).toBe('noopener noreferrer');
+    // Price and CTA render inside the card.
+    expect(screen.getByText('£22.50')).toBeTruthy();
+    expect(screen.getByText(/View/)).toBeTruthy();
   });
 
   it('expands the evidence panel when toggled', async () => {
