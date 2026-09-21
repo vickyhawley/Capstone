@@ -9,8 +9,8 @@
 
 :root {
   /* Base surface + text */
-  --color-bg: #FCF5E5;
-  --color-surface: #FAF0D5;
+  --color-bg: #FDFBF5;
+  --color-surface: #F7F0DC;
   --color-text: #0F1E3F;
   --color-muted: rgba(15, 30, 63, 0.65);
   --color-subtle: rgba(15, 30, 63, 0.12);
@@ -19,11 +19,13 @@
   --color-border: #C9A64C;
   --color-border-muted: rgba(201, 166, 76, 0.5);
 
-  /* Accents (pill buttons, user bubbles, chips) */
+  /* Accents (pill buttons, user bubbles, chips). Accent-text is
+   * a light butter-yellow — softer than a saturated gold, reads
+   * clearly on the navy pill background at any size. */
   --color-accent-bg: #0F1E3F;
   --color-accent-bg-hover: #1A2A55;
-  --color-accent-text: #F4C542;
-  --color-accent-text-muted: rgba(244, 197, 66, 0.75);
+  --color-accent-text: #F5D07A;
+  --color-accent-text-muted: rgba(245, 208, 122, 0.75);
 
   /* States */
   --color-error: #A83232;
