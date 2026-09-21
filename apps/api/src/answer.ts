@@ -56,7 +56,26 @@ import type {
 import { CircuitBreaker, renderBehaviour, runToolLoop } from '@groundwork/core';
 import { createClient } from '@supabase/supabase-js';
 import { Hono } from 'hono';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import OpenAI from 'openai';
+
+// Repo root — anchor for default data-file paths so the api process
+// finds YAMLs regardless of what directory it was launched from.
+// Before this: `data/nfcs-*.yaml` defaults resolved relative to
+// CWD, which breaks any run that isn't `pnpm dev` from repo root
+// (e.g. `pnpm --filter @groundwork/api dev` sets CWD to apps/api/).
+// The env-var overrides (STOCK_LOOKUP_*, DELIVERY_DISTRICTS_PATH,
+// SHOP_INFO_PATH) still take precedence when set — this just makes
+// the defaults sane.
+//
+// answer.ts sits at apps/api/src/answer.ts in dev and apps/api/dist/
+// answer.js in prod build; both are three levels below repo root,
+// so the same relative offset works.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+function dataPath(relative: string): string {
+  return resolve(REPO_ROOT, relative);
+}
 
 import { MAX_ITERATIONS, TIME_BUDGET_MS } from './limits.js';
 
@@ -408,11 +427,12 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
   const sparse = new PgTsRankRetriever(supabase, supabaseBreaker);
   const retriever = new HybridRetriever(dense, sparse, rrf());
   const outOfScopePath =
-    process.env['STOCK_LOOKUP_OUT_OF_SCOPE_PATH'] ?? 'data/nfcs-out-of-scope.yaml';
-  const pendingPath = process.env['STOCK_LOOKUP_PENDING_PATH'] ?? 'data/nfcs-pending.yaml';
+    process.env['STOCK_LOOKUP_OUT_OF_SCOPE_PATH'] ?? dataPath('data/nfcs-out-of-scope.yaml');
+  const pendingPath =
+    process.env['STOCK_LOOKUP_PENDING_PATH'] ?? dataPath('data/nfcs-pending.yaml');
   const districtsPath =
-    process.env['DELIVERY_DISTRICTS_PATH'] ?? 'data/delivery-districts.yaml';
-  const shopInfoPath = process.env['SHOP_INFO_PATH'] ?? 'data/nfcs-shop-info.yaml';
+    process.env['DELIVERY_DISTRICTS_PATH'] ?? dataPath('data/delivery-districts.yaml');
+  const shopInfoPath = process.env['SHOP_INFO_PATH'] ?? dataPath('data/nfcs-shop-info.yaml');
   const [outOfScope, pending, districts, shopInfo] = await Promise.all([
     loadStatusOverrideList(outOfScopePath),
     loadStatusOverrideList(pendingPath),
