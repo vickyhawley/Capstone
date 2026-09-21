@@ -103,6 +103,13 @@
   color: color-mix(in srgb, currentColor 60%, transparent);
 }
 
+.degradedReason {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.75rem;
+  color: #a01020;
+  word-break: break-word;
+}
+
 .evidenceHeading {
   font-size: 0.8125rem;
   margin-block: 0.75rem 0.25rem;

@@ -121,6 +121,12 @@ function EvidencePanel({
             </dd>
           </>
         ) : null}
+        {response.degraded_reason ? (
+          <>
+            <dt>Degraded reason</dt>
+            <dd className={styles.degradedReason}>{response.degraded_reason}</dd>
+          </>
+        ) : null}
         {response.delivery_zone_status ? (
           <>
             <dt>Delivery zone</dt>
