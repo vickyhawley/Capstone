@@ -34,6 +34,13 @@ const CANNED_ANSWER: AnswerResponse = {
   ],
   substitute_handles: [],
   delivery_zone_status: null,
+  product_links: [
+    {
+      handle: 'horsehage-timothy',
+      title: 'HorseHage Timothy',
+      url: 'https://newforestcountrystore.co.uk/products/horsehage-timothy',
+    },
+  ],
 };
 
 describe('App — chat shell smoke', () => {
@@ -93,6 +100,23 @@ describe('App — chat shell smoke', () => {
         body: JSON.stringify({ query: 'do you sell HorseHage Timothy' }),
       }),
     );
+  });
+
+  it('renders product-link chips below the bot answer', async () => {
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('Ask something…'), {
+      target: { value: 'do you sell HorseHage Timothy' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+    await waitFor(() => screen.getByText(CANNED_ANSWER.answer));
+
+    // Chip renders as a link with target=_blank and the storefront URL.
+    const chip = screen.getByRole('link', { name: /HorseHage Timothy/ });
+    expect(chip.getAttribute('href')).toBe(
+      'https://newforestcountrystore.co.uk/products/horsehage-timothy',
+    );
+    expect(chip.getAttribute('target')).toBe('_blank');
+    expect(chip.getAttribute('rel')).toBe('noopener noreferrer');
   });
 
   it('expands the evidence panel when toggled', async () => {

@@ -84,6 +84,12 @@ interface AnswerRequestBody {
   readonly conversation_id?: unknown;
 }
 
+interface ProductLink {
+  readonly handle: string;
+  readonly title: string | null;
+  readonly url: string;
+}
+
 interface AnswerResponseBody {
   readonly answer: string;
   readonly citations: readonly never[];
@@ -109,6 +115,13 @@ interface AnswerResponseBody {
    *  Consumed by the Python harness `delivery_zone_correct` metric —
    *  closes the GW-21 producer-ahead-of-consumer gap. */
   readonly delivery_zone_status: 'within_radius' | 'defer_to_staff' | null;
+  /** Sprint 4 (product deep-links): clickable storefront links
+   *  derived from stock_lookup's matched product and substitute_
+   *  lookup's returned substitutes. Priority: matched first, then
+   *  substitutes. Empty when neither tool ran with a product
+   *  result. URLs built from NFCS_STOREFRONT_BASE_URL + Shopify's
+   *  /products/{handle} pattern. */
+  readonly product_links: readonly ProductLink[];
   /** GW-23: populated when the request completed via the infra-
    *  failure graceful-escalate path. Null on all normal responses.
    *  Machine-readable free string; harness metrics can key on
@@ -177,6 +190,7 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
       let toolCalls: readonly ToolCallSummary[] = [];
       let substituteHandles: readonly string[] = [];
       let deliveryZoneStatus: 'within_radius' | 'defer_to_staff' | null = null;
+      let productLinks: readonly ProductLink[] = [];
       let synthesizedAnswer: string | null = null;
       let traceId: string | null = null;
       if (behaviour.kind === 'answer') {
@@ -214,6 +228,7 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
         // rather than throw.
         substituteHandles = extractSubstituteHandles(loopResult.toolInvocations);
         deliveryZoneStatus = extractDeliveryZoneStatus(loopResult.toolInvocations);
+        productLinks = extractProductLinks(loopResult.toolInvocations);
 
         // Sprint 4: synthesis. Compose the customer-facing answer
         // copy from the tool loop's outputs + the router's
@@ -250,6 +265,7 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
         tool_calls: toolCalls,
         substitute_handles: substituteHandles,
         delivery_zone_status: deliveryZoneStatus,
+        product_links: productLinks,
       };
       return c.json(response);
     } catch (error) {
@@ -294,6 +310,7 @@ function renderDegradedEscalate(error: unknown): AnswerResponseBody {
     tool_calls: [],
     substitute_handles: [],
     delivery_zone_status: null,
+    product_links: [],
     degraded_reason: message,
   };
 }
@@ -343,6 +360,82 @@ function extractDeliveryZoneStatus(
   const status = value?.status;
   if (status === 'within_radius' || status === 'defer_to_staff') return status;
   return null;
+}
+
+// ---------- Sprint 4: storefront deep links ----------
+//
+// Turn product handles from tool results into clickable URLs the
+// UI renders as chips below the answer bubble. Shopify pattern:
+// /products/{handle}. Base URL configurable via env var so a
+// staging storefront (or a moved deployment) doesn't need a code
+// change.
+//
+// Priority: stock_lookup.matchedHandle first (the product the
+// customer asked about), then substitute_lookup.substitutes[] in
+// the order the tool returned them (top-ranked substitute first).
+// Duplicates dropped — a matched product also appearing as a
+// substitute would render twice otherwise.
+
+const STOREFRONT_BASE_URL_DEFAULT = 'https://newforestcountrystore.co.uk';
+
+function storefrontBaseUrl(): string {
+  const raw = process.env['NFCS_STOREFRONT_BASE_URL']?.trim();
+  const base = raw && raw.length > 0 ? raw : STOREFRONT_BASE_URL_DEFAULT;
+  // Trim a trailing slash so the join is unambiguous.
+  return base.endsWith('/') ? base.slice(0, -1) : base;
+}
+
+function productUrl(handle: string): string {
+  return `${storefrontBaseUrl()}/products/${encodeURIComponent(handle)}`;
+}
+
+function extractProductLinks(
+  invocations: readonly ToolInvocationLite[],
+): readonly ProductLink[] {
+  const links: ProductLink[] = [];
+  const seen = new Set<string>();
+  const push = (handle: unknown, title: unknown): void => {
+    if (typeof handle !== 'string' || handle.length === 0) return;
+    if (seen.has(handle)) return;
+    seen.add(handle);
+    links.push({
+      handle,
+      title: typeof title === 'string' && title.length > 0 ? title : null,
+      url: productUrl(handle),
+    });
+  };
+
+  const stockInv = invocations.find(
+    (inv) => inv.call.name === 'product.stock_lookup' && inv.result.ok,
+  );
+  if (stockInv) {
+    const value = stockInv.result.value as
+      | { readonly matchedHandle?: unknown; readonly matchedTitle?: unknown }
+      | undefined;
+    push(value?.matchedHandle, value?.matchedTitle);
+  }
+
+  const substituteInv = invocations.find(
+    (inv) => inv.call.name === 'product.substitute_lookup' && inv.result.ok,
+  );
+  if (substituteInv) {
+    const value = substituteInv.result.value as
+      | {
+          readonly substitutes?: readonly {
+            readonly handle?: unknown;
+            readonly title?: unknown;
+          }[];
+        }
+      | undefined;
+    const substitutes = value?.substitutes;
+    if (Array.isArray(substitutes)) {
+      for (const s of substitutes) {
+        push(s?.handle, s?.title);
+      }
+    }
+  }
+
+  return links;
 }
 
 function escalationTargetOf(b: Behaviour): string | null {

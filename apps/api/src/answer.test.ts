@@ -512,6 +512,113 @@ describe('POST /api/answer', () => {
     expect(captured!.toolResults[0]?.call.args).toEqual({ topic: 'contact' });
   });
 
+  // ---------- Sprint 4: product deep-links ----------
+
+  it('surfaces matched product + substitutes as product_links with storefront URLs', async () => {
+    const app = createAnswerRoute(
+      makeDepsWithRealPlanner(productRouter('haygates conditioning cubes'), {
+        'product.stock_lookup': {
+          ok: true,
+          value: {
+            status: 'orderable',
+            matchedHandle: 'haygates-conditioning-cubes',
+            matchedTitle: 'Haygates Conditioning Cubes',
+          },
+        },
+        'product.substitute_lookup': {
+          ok: true,
+          value: {
+            substitutes: [
+              { handle: 'hilight-conditioning-cubes', title: 'HiLight Conditioning Cubes' },
+              { handle: 'baileys-no-4-top-line-cubes', title: 'Baileys No 4' },
+            ],
+          },
+        },
+      }),
+    );
+    const res = await post(app, { query: 'do you stock haygates conditioning cubes' });
+    const body = (await res.json()) as Record<string, unknown>;
+    const links = body['product_links'] as Array<{
+      handle: string;
+      title: string | null;
+      url: string;
+    }>;
+    // Priority: matched first, then substitutes in tool order.
+    expect(links.map((l) => l.handle)).toEqual([
+      'haygates-conditioning-cubes',
+      'hilight-conditioning-cubes',
+      'baileys-no-4-top-line-cubes',
+    ]);
+    expect(links[0]?.url).toBe(
+      'https://newforestcountrystore.co.uk/products/haygates-conditioning-cubes',
+    );
+    expect(links[0]?.title).toBe('Haygates Conditioning Cubes');
+  });
+
+  it('deduplicates when matched product also appears in substitutes', async () => {
+    const app = createAnswerRoute(
+      makeDepsWithRealPlanner(productRouter('hilight'), {
+        'product.stock_lookup': {
+          ok: true,
+          value: {
+            status: 'orderable',
+            matchedHandle: 'hilight-conditioning-cubes',
+            matchedTitle: 'HiLight Conditioning Cubes',
+          },
+        },
+        'product.substitute_lookup': {
+          ok: true,
+          value: {
+            substitutes: [
+              { handle: 'hilight-conditioning-cubes', title: 'HiLight Conditioning Cubes' },
+              { handle: 'other-cubes', title: 'Other Cubes' },
+            ],
+          },
+        },
+      }),
+    );
+    const res = await post(app, { query: 'hilight cubes' });
+    const body = (await res.json()) as Record<string, unknown>;
+    const links = body['product_links'] as Array<{ handle: string }>;
+    expect(links.map((l) => l.handle)).toEqual([
+      'hilight-conditioning-cubes',
+      'other-cubes',
+    ]);
+  });
+
+  it('returns empty product_links when no product tools ran', async () => {
+    const app = createAnswerRoute(
+      makeDepsWithRealPlanner(logisticsRouter('BH24'), {
+        'logistics.delivery_zone': { ok: true, value: { status: 'within_radius' } },
+      }),
+    );
+    const res = await post(app, { query: 'do you deliver to BH24' });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['product_links']).toEqual([]);
+  });
+
+  it('honors NFCS_STOREFRONT_BASE_URL env var override', async () => {
+    const original = process.env['NFCS_STOREFRONT_BASE_URL'];
+    process.env['NFCS_STOREFRONT_BASE_URL'] = 'https://staging.example.com';
+    try {
+      const app = createAnswerRoute(
+        makeDepsWithRealPlanner(productRouter('haynets'), {
+          'product.stock_lookup': {
+            ok: true,
+            value: { status: 'exact', matchedHandle: 'haynet-small', matchedTitle: 'Haynet' },
+          },
+        }),
+      );
+      const res = await post(app, { query: 'haynets' });
+      const body = (await res.json()) as Record<string, unknown>;
+      const links = body['product_links'] as Array<{ url: string }>;
+      expect(links[0]?.url).toBe('https://staging.example.com/products/haynet-small');
+    } finally {
+      if (original === undefined) delete process.env['NFCS_STOREFRONT_BASE_URL'];
+      else process.env['NFCS_STOREFRONT_BASE_URL'] = original;
+    }
+  });
+
   it('synthesizer throw routes through the GW-23 graceful-escalate path', async () => {
     const deps: AnswerDeps = {
       router: productRouter('haynets'),

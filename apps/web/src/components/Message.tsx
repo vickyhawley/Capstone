@@ -63,10 +63,31 @@ function BotMessageBubble({ response }: { readonly response: AnswerResponse }) {
   const isDegraded = response.degraded_reason != null && response.degraded_reason !== '';
   const toolCount = response.tool_calls.length;
   const summary = summariseTools(response);
+  const productLinks = response.product_links;
 
   return (
     <div className={`${styles.bubble} ${styles.bot}`}>
       <p className={styles.text}>{response.answer}</p>
+
+      {productLinks.length > 0 ? (
+        <ul className={styles.productLinks} aria-label="Products mentioned">
+          {productLinks.map((link) => (
+            <li key={link.handle}>
+              <a
+                className={styles.productChip}
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span>{link.title ?? link.handle}</span>
+                <span aria-hidden="true" className={styles.productChipArrow}>
+                  ↗
+                </span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       <div className={styles.footer}>
         <button

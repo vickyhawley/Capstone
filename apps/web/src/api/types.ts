@@ -31,6 +31,12 @@ export interface ToolCallSummary {
   readonly duration_ms: number;
 }
 
+export interface ProductLink {
+  readonly handle: string;
+  readonly title: string | null;
+  readonly url: string;
+}
+
 export interface AnswerResponse {
   readonly answer: string;
   readonly citations: readonly unknown[];
@@ -46,6 +52,7 @@ export interface AnswerResponse {
   readonly tool_calls: readonly ToolCallSummary[];
   readonly substitute_handles: readonly string[];
   readonly delivery_zone_status: DeliveryZoneStatus | null;
+  readonly product_links: readonly ProductLink[];
   readonly degraded_reason?: string | null;
 }
 
