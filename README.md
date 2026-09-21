@@ -23,7 +23,14 @@ public alias still carries the older name.
 
 ## Project board
 
-`TODO` — link to the 36-story board.
+See [`docs/project-board.md`](docs/project-board.md) for the full
+Kanban-style view of all 37 stories across four sprints, with status
+and evidence pointers. The document is versioned with the code so the
+board state at any commit is reproducible.
+
+The `docs/design-and-testing.md` document is the assessed design and
+testing artifact (architecture decisions, patterns used, deployment
+options with cost implications, and testing methodology).
 
 ## CI status
 
