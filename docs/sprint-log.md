@@ -4204,6 +4204,100 @@ full purchase-shaped conversation surface — ask about the
 product, click through, order via the channel the assistant
 named. Sprint 4 has five customer-real paths.
 
+### Subscription delivery — recurring drops for feed/bedding/haylage (2026-09-21)
+
+Sixth Sprint-4 story, surfaced live. Customer question:
+"can we mention the delivery subscription if they need feed,
+bedding, or haylage (they can get these items delivered
+regularly if needed)?" These three categories are recurring-
+consumption products — hay runs out on a predictable schedule.
+The shop already offers this operationally; the assistant now
+knows about it.
+
+**Design — single source of truth in the shop-info YAML.**
+`data/nfcs-shop-info.yaml` grows a `subscription_delivery`
+block: `{description, eligible_types}` where eligible_types is
+the exact list of category names (case-sensitive against chunk
+metadata.type: `Feed`, `Bedding`, `Haylage`). ShopInfoTool
+exposes the block. Composition root passes the eligible_types
+array to StockLookupTool at construction time. When retrieval
+matches a chunk whose type is in the list, StockLookupResult
+carries `subscriptionEligible: true`. Synthesizer sees it in
+findings and mentions the option in the answer.
+
+**Alternative rejected**: hardcode the category list in stock-
+lookup-tool.ts. Rejected because the shop-info tool ALSO needs
+to know it (a customer asking "how do I place a subscription
+order?" should get the same list), so putting it in one place
+and threading it beats two hardcoded copies drifting.
+
+**What landed:**
+
+- `data/nfcs-shop-info.yaml` grows the `subscription_delivery`
+  block. Description is prose ("weekly / fortnightly / monthly,
+  skip a drop by messaging the day before, pause anytime, no
+  minimum, no lock-in") drawn from the SME's stated policy.
+- `ShopInfoTool.load()` parses + validates the new block —
+  malformed YAML surfaces as a deps-build error.
+- `StockLookupTool` grows an optional fifth constructor arg
+  `subscriptionEligibleTypes: readonly string[]` (default
+  empty — existing tests + fixtures don't need to opt in).
+  `StockLookupResult.subscriptionEligible: boolean | null` —
+  true when matched.type is in the list, false when matched
+  and not, null when no product matched (unavailable/pending).
+- `OpenAiSynthesizer.summariseStockLookup` renders the flag
+  only when true (drops false/null — model doesn't need to
+  filter negative signal out).
+- `OpenAiSynthesizer.summariseShopInfo` renders the full
+  subscriptionDelivery block so answers to "how do I order"
+  or "what payment options" naturally cover subscription.
+- System prompt gets a new "Offers" section: one clause each
+  for the stock-lookup flag and the shop-info block. Named
+  "surface when relevant, don't push" — the assistant should
+  mention it as a helpful footer, not open with the pitch.
+
+**Test counts:** core 77 unchanged; adapters 227 (was 220,
++7: +5 subscriptionEligible in stock-lookup, +2 synthesizer
+render tests); api 51 unchanged (integration coverage is
+already routed through the existing product-intent test — the
+subscription flag rides on that pipeline without a dedicated
+integration test needed); web 4 unchanged; ingestion 53
+unchanged; Python 112 unchanged. Total 524.
+
+**Also discovered along the way — roadmap items, NOT worked:**
+
+- **UI evidence-panel doesn't render `subscriptionEligible`.**
+  The evidence toggle shows tool names and status but not the
+  new flag. Small hardening — one row in the evidence grid on
+  Message.tsx. Deferred to keep this story tight.
+- **No customer-visible subscription CTA on the chip row.**
+  Product-link chips today are pure storefront deep-links. A
+  "Subscribe to regular delivery" action button on eligible
+  products would close the loop further. Requires a shop-side
+  URL for the subscription flow (does one exist? Sprint-4
+  question for the SME).
+- **Prompt-only enforcement.** The synthesizer is instructed
+  to surface subscription; a golden-set metric measuring
+  "did the answer mention subscription when appropriate"
+  doesn't exist. If regressions land, add a shape test on
+  a labelled subset of cases.
+- **Case-sensitive matching.** `subscriptionEligibleTypes.
+  includes(type)` is case-sensitive against chunk metadata.
+  If ingestion ever lowercases types, this silently starts
+  returning false for everything. Not a bug today (attribute
+  schemas use capitalised type names) but named for the
+  ingestion-refactor watchlist.
+
+**What this closes:** the assistant now knows how NFCS
+actually operates for its recurring-consumption categories.
+A customer asking "do you sell HorseHage Timothy?" gets a
+grounded answer AND — when the pipeline runs correctly — a
+one-sentence footer: "if this is something you'd get through
+regularly, we can set up a recurring delivery on whatever
+schedule suits you." No hard sell, no fabrication, no UX
+noise on non-eligible categories.
+
+
 
 
 
