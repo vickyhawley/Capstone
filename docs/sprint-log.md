@@ -4113,6 +4113,98 @@ The demo can pivot from "look at the trust receipts" to
 "look how quickly a customer gets a real answer to a real
 question" without a caveat.
 
+### Product deep-links — chat closes the loop to purchase (2026-09-21)
+
+Fifth Sprint-4 story, surfaced live during UI verification —
+"can the customer click through to the product from the chat?"
+Closes the loop from "assistant found the thing" to "customer
+buys the thing." Previously the answer named a product handle
+(e.g. "we have HiLight Conditioning Cubes") but the customer
+had no path from the chat bubble to the shop's storefront.
+
+**Design — link source is tool results, not synthesis prose.**
+The synthesizer's `answer` field is natural-language copy the
+model may paraphrase, reorder, or partially cite. Parsing it
+for product references is brittle. Instead: the server-side
+extractor reads `stock_lookup.matchedHandle/matchedTitle` and
+`substitute_lookup.substitutes[].handle/title` directly and
+emits `product_links: { handle, title, url }[]` on the
+ApiResponse. Even if synthesis paraphrases the product name in
+the answer text, the link stays authoritative — one source of
+truth per handle.
+
+**What landed:**
+
+- `AnswerResponseBody.product_links` field on the TS side +
+  matching declaration in the web workspace type mirror.
+- Server-side extractor `extractProductLinks` reads stock +
+  substitute tool results, dedupes when a matched product also
+  appears as a substitute, and preserves priority order
+  (matched first, then substitutes in tool order).
+- Shopify URL pattern: `${base}/products/${handle}` with
+  encodeURIComponent on the handle. Base URL default
+  `https://newforestcountrystore.co.uk`, overridable via
+  `NFCS_STOREFRONT_BASE_URL` env var (verified by an
+  integration test that flips the var and asserts URL shape).
+- 4 new api tests: matched + substitutes ordering, dedupe,
+  empty when no product tools ran, env-var override.
+- `Message` component grows a `<ul>` of chip-shaped `<a>`
+  elements below the answer text, always visible (not behind
+  the evidence toggle — customer-real, not evaluator-hidden).
+  `target="_blank" rel="noopener noreferrer"`.
+- CSS Modules on Message.module.css adds pill/chip styling
+  matching the existing bubble aesthetic.
+- 1 new web test: mounts App, submits query, asserts the chip
+  renders as a link with the correct storefront URL.
+
+**Scope calls recorded honestly:**
+
+- **Products only for MVP.** The user's URL examples included
+  collection URLs (`/collections/bedding`, `/collections/feed`)
+  but the tools don't emit collection handles today —
+  extracting them would require intent-level classification
+  ("is this a category ask or a product ask?"). Deferred. If
+  the demo shows a bedding-category question surface a bedding
+  collection link, that's a follow-on story.
+- **Shopify pattern hardcoded as the URL builder.** No
+  runtime detection, no platform-agnostic abstraction. The
+  base URL is env-configurable; the path shape is not. If NFCS
+  ever moves off Shopify, this is a code change (name the
+  storefront in a `StorefrontUrlBuilder` interface + adapter).
+  Sprint-4-hygiene story if it happens.
+
+**Also discovered along the way — roadmap items, NOT worked:**
+
+- **Availability signal on the chip.** Chips today show only
+  the title; a matched product with `status: exact` vs
+  `orderable` vs `unavailable` could carry a subtle
+  in-stock/available-to-order/not-carried tag. Nice-to-have,
+  requires threading `stockStatus` through the extractor.
+- **Substitute-only chip surface.** When the customer asks
+  about product X (unavailable at NFCS) and gets substitutes
+  A/B/C, all three chips are subs. Labelling them "instead
+  of X" would make the UX crisper. Same shape as above —
+  extractor can synthesise a `reason` field.
+- **Analytics on chip clicks.** The demo won't have this but
+  a production version wants "was the assistant's answer
+  actually useful" instrumented. Out of scope; named for the
+  post-capstone roadmap.
+- **Category / collection links.** Named above.
+
+**Test counts:** core 77 unchanged; adapters 220 unchanged;
+api 51 (was 47, +4 for product-links dispatch shapes); web 4
+(was 3, +1 for chip render); ingestion 53 unchanged; Python
+112 unchanged. Total 517.
+
+**What this closes:** the last piece between "assistant told me
+about a product" and "I can act on it." Combined with the
+shop-info tool (contact info, hours, how to order) and
+delivery-zone (does it reach me?), a customer now has a
+full purchase-shaped conversation surface — ask about the
+product, click through, order via the channel the assistant
+named. Sprint 4 has five customer-real paths.
+
+
 
 
 
