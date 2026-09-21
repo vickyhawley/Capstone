@@ -23,8 +23,8 @@ phone: "01425 201301"
 # Per data/guides/delivery.md §"Ordering channel": "Phone or
 # message — customers do not have to ring. WhatsApp is fine."
 messaging: "WhatsApp or SMS to the same number"
-# TODO-SME: confirm before the demo. Guides don't publish an email.
-email: null
+# SME-confirmed 2026-09-21.
+email: "dan@newforestcountrystore.co.uk"
 # Partial address — the guides confirm Ringwood + BH24. Full
 # street address is TODO-SME.
 address:
