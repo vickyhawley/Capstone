@@ -160,6 +160,12 @@ function EvidencePanel({
             <dd>{response.substitute_handles.join(', ')}</dd>
           </>
         ) : null}
+        {response.product_links.length > 0 ? (
+          <>
+            <dt>Product links</dt>
+            <dd>{response.product_links.map((l) => l.handle).join(', ')}</dd>
+          </>
+        ) : null}
         {response.trace_id ? (
           <>
             <dt>Trace</dt>

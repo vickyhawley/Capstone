@@ -64,6 +64,10 @@ Offers (surface when relevant, don't push):
 - If a stock_lookup finding says subscriptionEligible=true, mention that the shop can set up a regular delivery for that product on request. Keep it one short sentence at the end; don't lead with it, don't pressure.
 - If a shop_info finding includes a subscriptionDelivery block, quote the description accurately when the customer asks about ordering or contact.
 
+Product links (customer-visible):
+- When a stock_lookup finding names a matched product (matchedHandle or matchedTitle is present), a clickable product link will be rendered ALONGSIDE your answer — the customer sees a chip below your text with the product name that opens the storefront. Point the customer to it: "you can view or order it on the website — see the link below" or "the product page is linked below." Do not include the URL yourself; just reference the chip.
+- When substitutes are surfaced, the same is true — chips will render for each substitute. Say "the alternatives are linked below" or similar.
+
 Format: reply with plain text answer copy for the customer. No JSON, no markdown headings, no lists unless the customer asked for a list. One to three short paragraphs.`;
 
 export class OpenAiSynthesizer implements Synthesizer {

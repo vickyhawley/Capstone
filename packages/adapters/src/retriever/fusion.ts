@@ -42,7 +42,10 @@ export function rrf(k = 60): FusionStrategy {
         const bump = 1 / (k + rank);
         const existing = scores.get(chunk.chunkId);
         if (existing) {
-          scores.set(chunk.chunkId, { score: existing.score + bump, chunk });
+          scores.set(chunk.chunkId, {
+            score: existing.score + bump,
+            chunk: pickRicher(existing.chunk, chunk),
+          });
         } else {
           scores.set(chunk.chunkId, { score: bump, chunk });
         }
@@ -52,7 +55,17 @@ export function rrf(k = 60): FusionStrategy {
         const bump = 1 / (k + rank);
         const existing = scores.get(chunk.chunkId);
         if (existing) {
-          scores.set(chunk.chunkId, { score: existing.score + bump, chunk });
+          // On collision the two child retrievers return the same
+          // chunk_id but potentially different shapes — dense
+          // hydrates metadata via a follow-up SELECT (GW-19 fix),
+          // sparse doesn't. `pickRicher` prefers the version that
+          // carries metadata so downstream consumers (stock_lookup's
+          // matchedHandle / matchedTitle, product_links) don't get
+          // dropped on the common both-lists-hit case.
+          scores.set(chunk.chunkId, {
+            score: existing.score + bump,
+            chunk: pickRicher(existing.chunk, chunk),
+          });
         } else {
           scores.set(chunk.chunkId, { score: bump, chunk });
         }
@@ -62,6 +75,22 @@ export function rrf(k = 60): FusionStrategy {
         .map(({ score, chunk }) => ({ ...chunk, score }));
     },
   };
+}
+
+/**
+ * When the same chunk_id appears in both retrievers' outputs, one
+ * version may carry metadata (dense post-GW-19) and the other may
+ * not (sparse). Prefer the one that has it; if both do or neither
+ * do, keep the incumbent to preserve the caller's iteration order
+ * intent. Exported for testability + shared by both fusion
+ * strategies below.
+ */
+export function pickRicher(a: RetrievedChunk, b: RetrievedChunk): RetrievedChunk {
+  const aHas = a.metadata !== undefined && a.metadata !== null;
+  const bHas = b.metadata !== undefined && b.metadata !== null;
+  if (aHas && !bHas) return a;
+  if (bHas && !aHas) return b;
+  return a;
 }
 
 /**

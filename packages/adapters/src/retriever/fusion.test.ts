@@ -47,6 +47,53 @@ describe('rrf', () => {
     const fused = rrf(60).fuse({ dense, sparse });
     expect(fused.map((c) => c.chunkId)).toEqual(['a', 'b', 'c']);
   });
+
+  it('preserves metadata when a chunk appears in both lists (regression: sparse-overwrites-dense)', () => {
+    // The bug: PgvectorDenseRetriever hydrates metadata; PgTsRankRetriever
+    // does not. On collision, sparse iteration overwrote the dense
+    // version of the chunk object, dropping metadata. Downstream —
+    // stock_lookup's matchedHandle/matchedTitle → product_links —
+    // silently returned null on every good match.
+    const denseChunk: RetrievedChunk = {
+      chunkId: 'a',
+      documentId: 'doc-a',
+      text: 'text a',
+      score: 0.9,
+      metadata: { handle: 'baileys-no-4-top-line-cubes', type: 'Feed' },
+    };
+    const sparseChunk: RetrievedChunk = {
+      chunkId: 'a',
+      documentId: 'doc-a',
+      text: 'text a',
+      score: 0.5,
+      // no metadata — mirrors what PgTsRankRetriever emits today
+    };
+    const fused = rrf(60).fuse({ dense: [denseChunk], sparse: [sparseChunk] });
+    expect(fused).toHaveLength(1);
+    expect(fused[0]?.metadata).toEqual({
+      handle: 'baileys-no-4-top-line-cubes',
+      type: 'Feed',
+    });
+  });
+
+  it('takes metadata from sparse when only sparse has it (defensive symmetry)', () => {
+    const denseChunk: RetrievedChunk = {
+      chunkId: 'a',
+      documentId: 'doc-a',
+      text: 'text a',
+      score: 0.9,
+      // no metadata (hypothetical future — dense not hydrated)
+    };
+    const sparseChunk: RetrievedChunk = {
+      chunkId: 'a',
+      documentId: 'doc-a',
+      text: 'text a',
+      score: 0.5,
+      metadata: { handle: 'x' },
+    };
+    const fused = rrf(60).fuse({ dense: [denseChunk], sparse: [sparseChunk] });
+    expect(fused[0]?.metadata).toEqual({ handle: 'x' });
+  });
 });
 
 describe('weightedFusion', () => {
