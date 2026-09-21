@@ -1,7 +1,39 @@
+/*
+ * NFCS palette. Sprint 4.
+ *
+ * Cream background, dark navy text, gold trim on borders and
+ * dividers. Pill-shaped accents (buttons, chips, tags) are navy
+ * with gold/yellow text. Single source of truth here — every
+ * component module references these variables via var(--...).
+ */
+
 :root {
-  color-scheme: light dark;
+  /* Base surface + text */
+  --color-bg: #FCF5E5;
+  --color-surface: #FAF0D5;
+  --color-text: #0F1E3F;
+  --color-muted: rgba(15, 30, 63, 0.65);
+  --color-subtle: rgba(15, 30, 63, 0.12);
+
+  /* Trim */
+  --color-border: #C9A64C;
+  --color-border-muted: rgba(201, 166, 76, 0.5);
+
+  /* Accents (pill buttons, user bubbles, chips) */
+  --color-accent-bg: #0F1E3F;
+  --color-accent-bg-hover: #1A2A55;
+  --color-accent-text: #F4C542;
+  --color-accent-text-muted: rgba(244, 197, 66, 0.75);
+
+  /* States */
+  --color-error: #A83232;
+  --color-error-bg: rgba(168, 50, 50, 0.08);
+  --color-error-border: rgba(168, 50, 50, 0.35);
+
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   line-height: 1.5;
+  color: var(--color-text);
+  background: var(--color-bg);
 }
 
 *, *::before, *::after {
@@ -11,6 +43,9 @@
 body {
   margin: 0;
   padding: 1.5rem 1rem;
+  background: var(--color-bg);
+  color: var(--color-text);
+  min-height: 100vh;
 }
 
 .app-shell {

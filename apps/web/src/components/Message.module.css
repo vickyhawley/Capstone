@@ -5,24 +5,34 @@
   word-wrap: break-word;
 }
 
+/*
+ * User bubble — dark navy fill with gold text. Right-aligned. Reads
+ * as the customer's message; visually distinct from bot output which
+ * is on the cream surface.
+ */
 .bubble.user {
   align-self: flex-end;
-  background: color-mix(in srgb, currentColor 10%, transparent);
+  background: var(--color-accent-bg);
+  color: var(--color-accent-text);
   border-top-right-radius: 4px;
 }
 
+/*
+ * Bot bubble — cream surface with a soft gold border. Doesn't
+ * compete with the user's navy bubble for visual weight.
+ */
 .bubble.bot {
   align-self: flex-start;
-  background: color-mix(in srgb, currentColor 4%, transparent);
-  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-muted);
   border-top-left-radius: 4px;
 }
 
 .bubble.error {
   align-self: flex-start;
-  background: color-mix(in srgb, #cf222e 8%, transparent);
-  border: 1px solid color-mix(in srgb, #cf222e 30%, transparent);
-  color: #cf222e;
+  background: var(--color-error-bg);
+  border: 1px solid var(--color-error-border);
+  color: var(--color-error);
   border-top-left-radius: 4px;
 }
 
@@ -41,34 +51,39 @@
   gap: 0.375rem;
 }
 
+/*
+ * Product link chip — navy pill with gold text, like the Send button
+ * and About button. External-link arrow uses muted gold so it reads
+ * as a hint, not competing with the label.
+ */
 .productChip {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  padding: 0.375rem 0.75rem;
-  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  padding: 0.375rem 0.875rem;
+  border: 1px solid var(--color-accent-bg);
   border-radius: 999px;
-  background: color-mix(in srgb, currentColor 3%, transparent);
-  color: inherit;
+  background: var(--color-accent-bg);
+  color: var(--color-accent-text);
   text-decoration: none;
   font-size: 0.8125rem;
   line-height: 1.2;
-  transition: background 0.15s, border-color 0.15s;
+  font-weight: 500;
+  transition: background 0.15s;
 }
 
 .productChip:hover {
-  background: color-mix(in srgb, currentColor 8%, transparent);
-  border-color: color-mix(in srgb, currentColor 45%, transparent);
+  background: var(--color-accent-bg-hover);
 }
 
 .productChip:focus-visible {
-  outline: 2px solid currentColor;
+  outline: 2px solid var(--color-border);
   outline-offset: 2px;
 }
 
 .productChipArrow {
   font-size: 0.75rem;
-  opacity: 0.6;
+  color: var(--color-accent-text-muted);
 }
 
 .footer {
@@ -77,7 +92,7 @@
   gap: 0.75rem;
   margin-block-start: 0.75rem;
   padding-block-start: 0.5rem;
-  border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  border-top: 1px solid var(--color-border-muted);
 }
 
 .evidenceToggle {
@@ -86,27 +101,28 @@
   padding: 0.25rem 0;
   background: transparent;
   border: 0;
-  color: color-mix(in srgb, currentColor 70%, transparent);
+  color: var(--color-muted);
   cursor: pointer;
   text-align: left;
 }
 
 .evidenceToggle:hover {
-  color: currentColor;
+  color: var(--color-text);
   text-decoration: underline;
 }
 
 .evidenceToggle:focus-visible {
-  outline: 2px solid currentColor;
+  outline: 2px solid var(--color-border);
   outline-offset: 2px;
   border-radius: 2px;
 }
 
 .degradedTag {
   font-size: 0.6875rem;
-  padding: 0.125rem 0.5rem;
-  background: color-mix(in srgb, #cf222e 15%, transparent);
-  color: #a01020;
+  padding: 0.125rem 0.625rem;
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  border: 1px solid var(--color-error-border);
   border-radius: 999px;
   cursor: help;
   font-weight: 500;
@@ -115,7 +131,8 @@
 .evidence {
   margin-block-start: 0.75rem;
   padding: 0.75rem;
-  background: color-mix(in srgb, currentColor 5%, transparent);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-muted);
   border-radius: 6px;
   font-size: 0.8125rem;
 }
@@ -129,7 +146,7 @@
 
 .evidenceGrid dt {
   font-weight: 600;
-  color: color-mix(in srgb, currentColor 70%, transparent);
+  color: var(--color-muted);
 }
 
 .evidenceGrid dd {
@@ -139,13 +156,13 @@
 .trace {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 0.75rem;
-  color: color-mix(in srgb, currentColor 60%, transparent);
+  color: var(--color-muted);
 }
 
 .degradedReason {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 0.75rem;
-  color: #a01020;
+  color: var(--color-error);
   word-break: break-word;
 }
 
@@ -166,7 +183,7 @@
   align-items: center;
   gap: 0.5rem;
   padding-block: 0.25rem;
-  border-bottom: 1px dotted color-mix(in srgb, currentColor 15%, transparent);
+  border-bottom: 1px dotted var(--color-border-muted);
 }
 
 .toolItem:last-child {
@@ -180,5 +197,5 @@
 
 .toolMeta {
   font-size: 0.6875rem;
-  color: color-mix(in srgb, currentColor 60%, transparent);
+  color: var(--color-muted);
 }
