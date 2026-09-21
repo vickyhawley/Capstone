@@ -1,22 +1,30 @@
 import { useState } from 'react';
 
+import logoUrl from '../assets/nfcs-logo.png';
 import { AboutPanel } from './AboutPanel.js';
 import styles from './Header.module.css';
 
 /**
- * Top bar with title and Article 50 disclosure toggle. The About
- * panel is lazily rendered — the /api/about fetch only fires when
- * the user opens the panel, not on every page load.
+ * Top of the page — the shop's logo as the brand mark, centrally
+ * placed and prominent. The About-panel toggle sits in the top-
+ * right, positioned absolutely so the logo stays optically centred
+ * without the button pushing it off-axis.
+ *
+ * The alt text carries the shop name for screen readers — the
+ * image is decorative-looking but semantically IS the page's
+ * primary heading, so `role="img"` + a descriptive alt keeps
+ * assistive tech in step.
  */
 export function Header() {
   const [aboutOpen, setAboutOpen] = useState(false);
   return (
     <header className={styles.header}>
-      <div className={styles.titleRow}>
-        <div>
-          <h1 className={styles.title}>Groundwork</h1>
-          <p className={styles.subtitle}>Verified answers for New Forest Country Store</p>
-        </div>
+      <div className={styles.logoRow}>
+        <img
+          src={logoUrl}
+          alt="New Forest Country Store"
+          className={styles.logo}
+        />
         <button
           type="button"
           className={styles.aboutButton}
@@ -24,7 +32,7 @@ export function Header() {
           aria-expanded={aboutOpen}
           aria-controls="about-panel"
         >
-          {aboutOpen ? 'Hide about' : 'About this assistant'}
+          {aboutOpen ? 'Hide about' : 'About'}
         </button>
       </div>
       {aboutOpen ? <AboutPanel id="about-panel" /> : null}

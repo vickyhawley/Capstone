@@ -1,45 +1,33 @@
 .header {
-  border-bottom: 1px solid var(--color-border);
-  padding-block: 0.875rem;
-  margin-block-end: 1.25rem;
+  padding-block: 1.25rem 1rem;
+  margin-block-end: 1.5rem;
 }
 
-.titleRow {
+/*
+ * Logo centred; About button absolute-positioned in the top-right
+ * so it doesn't shift the logo off-axis. Position:relative on the
+ * row anchors the button.
+ */
+.logoRow {
+  position: relative;
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
-  gap: 1rem;
+  min-height: 100px;
 }
 
-/* Serif for the shop name — editorial weight sets NFCS apart from
- * generic SaaS chat products. System stack, zero network cost. */
-.title {
-  font-family: var(--font-serif);
-  font-size: 1.75rem;
-  margin: 0;
-  line-height: 1.1;
-  color: var(--color-text);
-  letter-spacing: -0.01em;
-  font-weight: 500;
-}
-
-.subtitle {
-  font-size: 0.875rem;
-  margin: 0.125rem 0 0;
-  color: var(--color-muted);
-  font-style: italic;
-}
-
-@media (max-width: 640px) {
-  .title {
-    font-size: 1.5rem;
-  }
-  .subtitle {
-    display: none;
-  }
+.logo {
+  display: block;
+  height: 100px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
 }
 
 .aboutButton {
+  position: absolute;
+  top: 0;
+  right: 0;
   font: inherit;
   font-size: 0.8125rem;
   padding: 0.5rem 1rem;
@@ -60,4 +48,17 @@
 .aboutButton:focus-visible {
   outline: 2px solid var(--color-border);
   outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .logo {
+    height: 72px;
+  }
+  .logoRow {
+    min-height: 72px;
+  }
+  .aboutButton {
+    font-size: 0.75rem;
+    padding: 0.375rem 0.75rem;
+  }
 }

@@ -12,12 +12,47 @@
   border-radius: 12px;
   overflow: hidden;
   background: #FFFFFF;
+  position: relative;
+}
+
+/*
+ * NFCS logo as a watermark behind the messages. Uses a pseudo-
+ * element so the actual <img> stays out of the DOM (decorative,
+ * screen readers skip it — the real logo in the header carries
+ * the alt text). Opacity kept very low so text stays readable
+ * over the top. Non-scrolling — background sits on .chat, not
+ * .history, so it stays put as messages scroll.
+ *
+ * Logo URL is inlined by Vite's ?url import in a real component;
+ * here we reference it via a CSS `url()` — Vite resolves the
+ * relative path at build time.
+ */
+.chat::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url('../assets/nfcs-logo.png');
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 55% auto;
+  opacity: 0.06;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Every direct child of .chat needs to sit ABOVE the watermark. */
+.chat > * {
+  position: relative;
+  z-index: 1;
 }
 
 @media (max-width: 640px) {
   .chat {
     height: calc(100dvh - 5rem);
     border-radius: 8px;
+  }
+  .chat::before {
+    background-size: 75% auto;
   }
 }
 

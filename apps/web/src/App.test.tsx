@@ -67,7 +67,8 @@ describe('App — chat shell smoke', () => {
 
   it('renders header + input + empty state on mount', () => {
     render(<App />);
-    expect(screen.getByText('Groundwork')).toBeTruthy();
+    // Header is a logo image, not text. Assert on the alt text.
+    expect(screen.getByAltText('New Forest Country Store')).toBeTruthy();
     expect(screen.getByPlaceholderText('Ask something…')).toBeTruthy();
     expect(screen.getByText(/What can I help you find/)).toBeTruthy();
   });
