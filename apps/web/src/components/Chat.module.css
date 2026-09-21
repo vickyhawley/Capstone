@@ -3,15 +3,16 @@
   flex-direction: column;
   /* dvh + a sane min/max keeps the chat area sized to viewport
    * on mobile (iOS Safari's URL bar shrink/grow) without stretching
-   * on ultra-tall desktop screens. */
-  height: calc(100dvh - 7rem);
+   * on ultra-tall desktop screens. Reserved space accounts for
+   * body padding + tightened header + margin. */
+  height: calc(100dvh - 9rem);
   min-height: 20rem;
   max-height: 44rem;
-  /* No border, pure white — chat area sits directly on the app
-   * background with no card treatment. */
   border-radius: 12px;
   overflow: hidden;
   background: #FFFFFF;
+  /* Dark-gold cast lifts the window off the cream page. */
+  box-shadow: var(--shadow-window);
   position: relative;
 }
 
@@ -48,7 +49,7 @@
 
 @media (max-width: 640px) {
   .chat {
-    height: calc(100dvh - 5rem);
+    height: calc(100dvh - 7rem);
     border-radius: 8px;
   }
   .chat::before {

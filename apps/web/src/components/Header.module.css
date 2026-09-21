@@ -1,6 +1,6 @@
 .header {
-  padding-block: 1.25rem 1rem;
-  margin-block-end: 1.5rem;
+  padding-block: 0.25rem 0.5rem;
+  margin-block-end: 0.875rem;
 }
 
 /*
@@ -13,12 +13,12 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 100px;
+  min-height: 72px;
 }
 
 .logo {
   display: block;
-  height: 100px;
+  height: 72px;
   width: auto;
   max-width: 100%;
   object-fit: contain;
@@ -52,10 +52,10 @@
 
 @media (max-width: 640px) {
   .logo {
-    height: 72px;
+    height: 56px;
   }
   .logoRow {
-    min-height: 72px;
+    min-height: 56px;
   }
   .aboutButton {
     font-size: 0.75rem;
