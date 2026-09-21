@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { ApiError, postAnswer } from '../api/client.js';
+import { ApiError, streamAnswer } from '../api/client.js';
+import type { AnswerResponse } from '../api/types.js';
 import styles from './Chat.module.css';
 import { InputBar } from './InputBar.js';
 import { MessageBubble, type Message } from './Message.js';
@@ -63,20 +64,78 @@ export function Chat() {
     setMessages((prev) => [...prev, userMsg]);
     setPending(true);
 
+    // Insert a placeholder bot bubble that we'll grow as deltas
+    // arrive. The bubble is created BEFORE the network call so
+    // the customer sees the empty bubble + spinner immediately.
+    const botId = nextId();
+    const placeholder: AnswerResponse = {
+      answer: '',
+      citations: [],
+      retrieved_chunk_ids: [],
+      refusal_reason: null,
+      trace_id: null,
+      intent: null,
+      adversarial_suspected: false,
+      adversarial_pattern: null,
+      product_query: null,
+      behavior: 'answer',
+      escalation_target: null,
+      tool_calls: [],
+      substitute_handles: [],
+      delivery_zone_status: null,
+      product_links: [],
+    };
+    setMessages((prev) => [...prev, { kind: 'bot', id: botId, response: placeholder }]);
+
+    // Accumulate the answer text in a ref-shaped local so we can
+    // append deltas without racing setState. Each delta triggers
+    // one setState call to append; final done event replaces the
+    // response with the full metadata.
+    let accumulated = '';
+    const patchBot = (patch: Partial<AnswerResponse>): void => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.kind === 'bot' && m.id === botId
+            ? { ...m, response: { ...m.response, ...patch } }
+            : m,
+        ),
+      );
+    };
+
     try {
-      const response = await postAnswer(trimmed);
-      setMessages((prev) => [...prev, { kind: 'bot', id: nextId(), response }]);
+      await streamAnswer(trimmed, {
+        onAnswerDelta: ({ text: delta }) => {
+          accumulated += delta;
+          patchBot({ answer: accumulated });
+        },
+        onDone: (metadata) => {
+          // Replace the response with the final metadata + the
+          // accumulated answer text. onAnswerDelta may or may not
+          // have fired (escalate/abstain paths emit one delta with
+          // the copy, degraded paths emit the escalate copy) — in
+          // all cases `accumulated` is authoritative for the text.
+          patchBot({ ...metadata, answer: accumulated });
+        },
+      });
     } catch (err: unknown) {
+      // Network / non-2xx from the stream endpoint. Replace the
+      // placeholder with an error bubble so the customer isn't
+      // left with an empty bot bubble. Failed query preserved for
+      // the retry action.
       const errorText =
         err instanceof ApiError
           ? `Something went wrong on the server (${err.status}). Please try again.`
           : "Couldn't reach the assistant — check your connection and try again.";
-      setMessages((prev) => [
-        ...prev,
-        // Attach the failed query so the retry button can re-submit
-        // without the customer re-typing.
-        { kind: 'error', id: nextId(), message: errorText, failedQuery: trimmed },
-      ]);
+      setMessages((prev) =>
+        prev
+          .filter((m) => m.id !== botId)
+          .concat({
+            kind: 'error',
+            id: nextId(),
+            message: errorText,
+            failedQuery: trimmed,
+          }),
+      );
     } finally {
       setPending(false);
     }
@@ -123,13 +182,12 @@ export function Chat() {
             <MessageBubble key={m.id} message={m} onRetry={handleRetry} />
           ))
         )}
-        {pending ? (
-          <div className={styles.pending} aria-label="Assistant is thinking">
-            <span className={styles.dot} />
-            <span className={styles.dot} />
-            <span className={styles.dot} />
-          </div>
-        ) : null}
+        {/* Standalone pending spinner removed — the streaming bot
+         * bubble is the loading indicator now. First delta typically
+         * arrives within 500ms, so the empty bubble is invisibly
+         * brief. A pending typing-indicator INSIDE the bubble is a
+         * Sprint-4+ polish item if the first-token latency ever
+         * gets slow enough to notice. */}
         <div ref={scrollAnchor} />
       </div>
       <InputBar onSubmit={handleSubmit} disabled={pending} />

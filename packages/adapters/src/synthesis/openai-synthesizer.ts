@@ -36,12 +36,17 @@
 import type {
   CircuitBreaker,
   Synthesizer,
+  SynthesizerDelta,
   SynthesizerInput,
   SynthesizerOutput,
   ToolInvocationRecord,
 } from '@groundwork/core';
 import type OpenAI from 'openai';
-import type { ChatCompletion } from 'openai/resources/chat/completions.js';
+import type {
+  ChatCompletion,
+  ChatCompletionChunk,
+} from 'openai/resources/chat/completions.js';
+import type { Stream } from 'openai/streaming.js';
 
 export const SYNTHESIZER_MODEL = 'gpt-4o';
 
@@ -112,6 +117,62 @@ export class OpenAiSynthesizer implements Synthesizer {
       answer: content,
       rationale: `intent=${input.routerDecision.intent}, tools=${input.toolResults.length}`,
     };
+  }
+
+  /**
+   * Streaming path. Same prompt shape as synthesize(); passes
+   * stream:true so OpenAI returns an async iterable of chunks
+   * (delta.content is the incremental text). Yields
+   * SynthesizerDelta as each chunk arrives.
+   *
+   * Failure handling parallels synthesize():
+   *   - Infra failure (5xx, network, breaker-open) → throw. SSE
+   *     handler catches at the request boundary and emits a
+   *     final graceful-escalate event.
+   *   - Stream that finishes with zero content → yield one final
+   *     delta carrying the fallback string. This is the streaming
+   *     equivalent of synthesize()'s empty-content fallback.
+   */
+  async *synthesizeStream(input: SynthesizerInput): AsyncIterable<SynthesizerDelta> {
+    const findingsBlock = renderToolFindings(input.toolResults);
+    const userMessage = renderUserMessage(input.query.text, findingsBlock);
+
+    // The SDK's create() return type is a union of streaming and
+    // non-streaming responses. With stream:true we get the
+    // streaming variant, but TS can't narrow across the property-
+    // bag call. Cast via unknown so the private `#private` field
+    // in Stream<T> doesn't confuse the checker; the runtime
+    // shape is correct.
+    const call = async (): Promise<Stream<ChatCompletionChunk>> => {
+      const result = await this.openai.chat.completions.create({
+        model: SYNTHESIZER_MODEL,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: userMessage },
+        ],
+        temperature: 0.2,
+        max_tokens: 400,
+        stream: true,
+      });
+      return result as unknown as Stream<ChatCompletionChunk>;
+    };
+
+    const stream = await (this.openaiBreaker ? this.openaiBreaker.run(call) : call());
+    let received = 0;
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content;
+      if (typeof delta === 'string' && delta.length > 0) {
+        received += delta.length;
+        yield { text: delta, done: false };
+      }
+    }
+    if (received === 0) {
+      // Stream ended without ever producing content — same
+      // fallback shape as the non-streaming empty-content path.
+      yield { text: FALLBACK_ANSWER, done: true };
+    } else {
+      yield { text: '', done: true };
+    }
   }
 }
 

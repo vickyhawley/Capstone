@@ -268,4 +268,105 @@ describe('OpenAiSynthesizer', () => {
       }),
     ).rejects.toThrow('openai 503');
   });
+
+  // ---------- synthesizeStream ----------
+
+  /** Mock a Stream<ChatCompletionChunk> from an array of delta
+   *  strings. Real SDK returns an async iterable; we mirror that. */
+  function makeStream(deltas: readonly string[]): AsyncIterable<{
+    readonly choices: readonly { readonly delta: { readonly content: string } }[];
+  }> {
+    return {
+      async *[Symbol.asyncIterator]() {
+        for (const text of deltas) {
+          yield { choices: [{ delta: { content: text } }] };
+        }
+      },
+    };
+  }
+
+  it('yields deltas as the model streams', async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue(makeStream(['Yes,', ' we', ' have it.'])),
+        },
+      },
+    } as unknown as OpenAI;
+    const synth = new OpenAiSynthesizer(openai);
+    const deltas: string[] = [];
+    for await (const d of synth.synthesizeStream({
+      query: { text: 'do you have it' },
+      routerDecision: makeDecision(),
+      toolResults: [],
+    })) {
+      deltas.push(d.text);
+    }
+    // Content deltas + one empty done-marker at the end.
+    expect(deltas).toEqual(['Yes,', ' we', ' have it.', '']);
+  });
+
+  it('marks only the final delta as done', async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue(makeStream(['a', 'b'])),
+        },
+      },
+    } as unknown as OpenAI;
+    const synth = new OpenAiSynthesizer(openai);
+    const flags: boolean[] = [];
+    for await (const d of synth.synthesizeStream({
+      query: { text: 'x' },
+      routerDecision: makeDecision(),
+      toolResults: [],
+    })) {
+      flags.push(d.done);
+    }
+    // Every content delta is done:false; final marker is done:true.
+    expect(flags).toEqual([false, false, true]);
+  });
+
+  it('empty stream falls back to canned answer as a single done-delta', async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue(makeStream([])),
+        },
+      },
+    } as unknown as OpenAI;
+    const synth = new OpenAiSynthesizer(openai);
+    const out: { text: string; done: boolean }[] = [];
+    for await (const d of synth.synthesizeStream({
+      query: { text: 'x' },
+      routerDecision: makeDecision(),
+      toolResults: [],
+    })) {
+      out.push(d);
+    }
+    expect(out).toHaveLength(1);
+    expect(out[0]?.done).toBe(true);
+    expect(out[0]?.text).toContain('give the shop a call');
+  });
+
+  it('propagates infra failure from the stream call', async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(new Error('stream 503')),
+        },
+      },
+    } as unknown as OpenAI;
+    const synth = new OpenAiSynthesizer(openai);
+    const iterate = async (): Promise<void> => {
+      for await (const _d of synth.synthesizeStream({
+        query: { text: 'x' },
+        routerDecision: makeDecision(),
+        toolResults: [],
+      })) {
+        // consume
+      }
+    };
+    await expect(iterate()).rejects.toThrow('stream 503');
+  });
 });

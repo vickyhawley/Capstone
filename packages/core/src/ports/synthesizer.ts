@@ -49,6 +49,32 @@ export interface SynthesizerOutput {
   readonly rationale?: string;
 }
 
+/**
+ * One increment of the streaming answer. `text` is the delta since
+ * the last emission (not the cumulative answer) — the caller
+ * concatenates as they arrive. `done` is true only on the final
+ * delta; if the caller needs the full answer at the end it should
+ * accumulate deltas itself.
+ *
+ * A stream that fails infra-side throws from the AsyncIterable's
+ * next() — same contract as `synthesize()`. Empty-content and
+ * malformed-response fallbacks come out as a single delta with the
+ * canned fallback text.
+ */
+export interface SynthesizerDelta {
+  readonly text: string;
+  readonly done: boolean;
+}
+
 export interface Synthesizer {
+  /** Non-streaming: returns the full answer as one string. Used by
+   *  the JSON /api/answer route + the Python eval harness. */
   synthesize(input: SynthesizerInput): Promise<SynthesizerOutput>;
+
+  /** Streaming: yields deltas as the model produces them. Used by
+   *  the SSE /api/answer/stream route + the browser chat UI so
+   *  answers form live rather than landing all at once. Adapters
+   *  MUST implement both — a common pattern is a thin `synthesize`
+   *  that collects the stream (see StubSynthesizer). */
+  synthesizeStream(input: SynthesizerInput): AsyncIterable<SynthesizerDelta>;
 }

@@ -49,6 +49,7 @@ export {
 export type { TraceSink, Span, SpanKind, SpanAttributeValue } from './ports/trace-sink.js';
 export type {
   Synthesizer,
+  SynthesizerDelta,
   SynthesizerInput,
   SynthesizerOutput,
 } from './ports/synthesizer.js';

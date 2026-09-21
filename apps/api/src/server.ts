@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { createAboutRoute } from './about.js';
 import { createAnswerRoute, defaultAnswerDeps } from './answer.js';
+import { createAnswerStreamRoute } from './answer-stream.js';
 import { MAX_ITERATIONS, TIME_BUDGET_MS, withTimeBudget } from './limits.js';
 import {
   assertLimiterOrFail,
@@ -96,38 +97,54 @@ const eagerSafetyGate = new RulesSafetyGate();
 // Sprint-3 tools actually fire on real requests (Tier-1 dispatch
 // per ADR-0014). Stateless — safe to construct once at import time.
 const eagerPlanner = new RouteBasedPlanner();
-app.route(
-  '/api/answer',
-  createAnswerRoute({
-    router: {
-      async route(query) {
-        return (await getAnswerDeps()).router.route(query);
-      },
+// Shared lazy-dep proxies for the JSON + SSE routes. Both routes
+// use the same AnswerDeps shape; declaring it once keeps them in
+// sync when new deps land.
+const lazyAnswerDeps = {
+  router: {
+    async route(query: Parameters<Awaited<ReturnType<typeof defaultAnswerDeps>>['router']['route']>[0]) {
+      return (await getAnswerDeps()).router.route(query);
     },
-    safetyGate: eagerSafetyGate,
-    planner: eagerPlanner,
-    toolRegistry: {
-      // `list()` on the ToolRegistry port is synchronous and is not
-      // yet called from any code path (as of Sprint 3 Story 4). When
-      // a real planner starts consuming it (GW-24), the composition
-      // root will need to await deps up front — return [] here so
-      // the proxy honours the interface contract meanwhile.
-      list() {
-        return [];
-      },
-      async invoke(call, signal) {
-        return (await getAnswerDeps()).toolRegistry.invoke(call, signal);
-      },
+  },
+  safetyGate: eagerSafetyGate,
+  planner: eagerPlanner,
+  toolRegistry: {
+    // `list()` on the ToolRegistry port is synchronous and is not
+    // yet called from any code path. Return [] to honour the
+    // interface contract meanwhile.
+    list() {
+      return [];
     },
-    traceSink: {
-      async record(span) {
-        return (await getAnswerDeps()).traceSink.record(span);
-      },
+    async invoke(
+      call: Parameters<Awaited<ReturnType<typeof defaultAnswerDeps>>['toolRegistry']['invoke']>[0],
+      signal?: AbortSignal,
+    ) {
+      return (await getAnswerDeps()).toolRegistry.invoke(call, signal);
     },
-    synthesizer: {
-      async synthesize(input) {
-        return (await getAnswerDeps()).synthesizer.synthesize(input);
-      },
+  },
+  traceSink: {
+    async record(
+      span: Parameters<Awaited<ReturnType<typeof defaultAnswerDeps>>['traceSink']['record']>[0],
+    ) {
+      return (await getAnswerDeps()).traceSink.record(span);
     },
-  }),
-);
+  },
+  synthesizer: {
+    async synthesize(
+      input: Parameters<Awaited<ReturnType<typeof defaultAnswerDeps>>['synthesizer']['synthesize']>[0],
+    ) {
+      return (await getAnswerDeps()).synthesizer.synthesize(input);
+    },
+    async *synthesizeStream(
+      input: Parameters<Awaited<ReturnType<typeof defaultAnswerDeps>>['synthesizer']['synthesizeStream']>[0],
+    ) {
+      const stream = (await getAnswerDeps()).synthesizer.synthesizeStream(input);
+      for await (const delta of stream) {
+        yield delta;
+      }
+    },
+  },
+};
+
+app.route('/api/answer', createAnswerRoute(lazyAnswerDeps));
+app.route('/api/answer/stream', createAnswerStreamRoute(lazyAnswerDeps));

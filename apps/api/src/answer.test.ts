@@ -416,6 +416,10 @@ describe('POST /api/answer', () => {
           captured = input;
           return { answer: 'captured-answer', rationale: 'test' };
         },
+        // eslint-disable-next-line @typescript-eslint/require-yield
+        async *synthesizeStream() {
+          // Not exercised by this test — JSON route only.
+        },
       },
     };
     const app = createAnswerRoute(capturingDeps);
@@ -447,6 +451,10 @@ describe('POST /api/answer', () => {
         async synthesize() {
           synthCalled = true;
           return { answer: 'should-not-see-me' };
+        },
+        // eslint-disable-next-line @typescript-eslint/require-yield
+        async *synthesizeStream() {
+          // Not exercised by this test.
         },
       },
     };
@@ -497,6 +505,10 @@ describe('POST /api/answer', () => {
         async synthesize(input) {
           captured = input;
           return { answer: 'Our number is 01425 201301.' };
+        },
+        // eslint-disable-next-line @typescript-eslint/require-yield
+        async *synthesizeStream() {
+          // Not exercised by this test.
         },
       },
     };
@@ -630,6 +642,10 @@ describe('POST /api/answer', () => {
       traceSink: new StubTraceSink(),
       synthesizer: {
         async synthesize() {
+          throw new Error('simulated openai 5xx');
+        },
+        // eslint-disable-next-line @typescript-eslint/require-yield
+        async *synthesizeStream() {
           throw new Error('simulated openai 5xx');
         },
       },

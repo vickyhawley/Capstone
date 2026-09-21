@@ -43,15 +43,41 @@ const CANNED_ANSWER: AnswerResponse = {
   ],
 };
 
+/**
+ * Build an SSE-formatted ReadableStream body from a canned answer.
+ * Emits one answer-delta with the full text, then a done event with
+ * all the metadata. Mirrors the shape the real server produces.
+ */
+function sseStreamFromCanned(canned: AnswerResponse): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const frame = (event: string, data: unknown): string =>
+    `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  const {
+    answer,
+    citations: _citations,
+    retrieved_chunk_ids: _chunks,
+    ...metadata
+  } = canned;
+  void _citations;
+  void _chunks;
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(frame('answer-delta', { text: answer })));
+      controller.enqueue(encoder.encode(frame('done', metadata)));
+      controller.close();
+    },
+  });
+}
+
 describe('App — chat shell smoke', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     fetchMock = vi.fn(async (url: string) => {
-      if (url === '/api/answer') {
-        return new Response(JSON.stringify(CANNED_ANSWER), {
+      if (url === '/api/answer/stream') {
+        return new Response(sseStreamFromCanned(CANNED_ANSWER), {
           status: 200,
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'text/event-stream' },
         });
       }
       return new Response('not mocked', { status: 404 });
@@ -93,9 +119,9 @@ describe('App — chat shell smoke', () => {
     // includes the step count in customer-shaped copy.
     expect(screen.getByRole('button', { name: /what i checked/i })).toBeTruthy();
 
-    // Fetch was called with the query.
+    // Fetch was called against the stream endpoint with the query.
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/answer',
+      '/api/answer/stream',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ query: 'do you sell HorseHage Timothy' }),
