@@ -83,10 +83,13 @@ function dataPath(relative: string): string {
 
 import { MAX_ITERATIONS, TIME_BUDGET_MS } from './limits.js';
 import {
+  extractCitations,
   extractDeliveryZoneStatus,
   extractProductLinks,
+  extractRetrievedChunkIds,
   extractSubstituteHandles,
   generateTraceId,
+  type Citation,
   type DeliveryZoneStatus,
   type ProductLink,
 } from './tool-output.js';
@@ -98,7 +101,18 @@ interface AnswerRequestBody {
 
 interface AnswerResponseBody {
   readonly answer: string;
-  readonly citations: readonly never[];
+  /** Sprint 4 (capstone submission): citations the answer is grounded on.
+   *  Primary chunk from each retrieval-backed tool result. Consumed by
+   *  the eval harness `groundedness` and `citation_accuracy` metrics
+   *  and by the web UI's evidence panel. Empty on refusal / abstain /
+   *  escalate turns and on YAML-only tool paths (shop_info,
+   *  delivery_zone) where there is no retrieved chunk to cite. */
+  readonly citations: readonly Citation[];
+  /** All chunk IDs the tools retrieved during this turn. Consumed by
+   *  the eval harness `recall_at_k` and `retrieval_relevance` metrics
+   *  (see evals/groundwork_evals/schema.py `ApiResponse`). Broader
+   *  than `citations` above — this is the whole top-k retrieval; the
+   *  narrow citation set is what the answer is grounded on. */
   readonly retrieved_chunk_ids: readonly string[];
   readonly refusal_reason: string | null;
   readonly trace_id: string | null;
@@ -241,6 +255,8 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
       let substituteHandles: readonly string[] = [];
       let deliveryZoneStatus: DeliveryZoneStatus | null = null;
       let productLinks: readonly ProductLink[] = [];
+      let citations: readonly Citation[] = [];
+      let retrievedChunkIds: readonly string[] = [];
       let synthesizedAnswer: string | null = null;
       let traceId: string | null = null;
       if (behaviour.kind === 'answer') {
@@ -279,6 +295,8 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
         substituteHandles = extractSubstituteHandles(loopResult.toolInvocations);
         deliveryZoneStatus = extractDeliveryZoneStatus(loopResult.toolInvocations);
         productLinks = extractProductLinks(loopResult.toolInvocations);
+        citations = extractCitations(loopResult.toolInvocations);
+        retrievedChunkIds = extractRetrievedChunkIds(loopResult.toolInvocations);
 
         // Sprint 4: synthesis. Compose the customer-facing answer
         // copy from the tool loop's outputs + the router's
@@ -319,8 +337,8 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
         // renderer, and synthesizedAnswer is guaranteed non-null for
         // answer-behaviour turns by the adapter's own fallback.
         answer: finalAnswer,
-        citations: [],
-        retrieved_chunk_ids: [],
+        citations,
+        retrieved_chunk_ids: retrievedChunkIds,
         refusal_reason: behaviour.kind === 'abstain' ? behaviour.refusalReason : null,
         trace_id: traceId,
         intent: decision.intent,

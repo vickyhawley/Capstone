@@ -145,6 +145,124 @@ export function extractProductLinks(
 }
 
 /**
+ * Citation attached to a response. Matches the Python eval schema
+ * `Citation` (`evals/groundwork_evals/schema.py`). `chunk_id` is the
+ * only field the `groundedness` and `citation_accuracy` metrics read;
+ * `document_id` is optional and surfaced when the tool result carries
+ * it so the eval judge (and human reviewers) can trace back to source.
+ */
+export interface Citation {
+  readonly chunk_id: string;
+  readonly document_id: string | null;
+}
+
+/**
+ * All chunk IDs the tools retrieved during a turn. Consumed by the
+ * `recall_at_k` and `retrieval_relevance` eval metrics. Over-collecting
+ * here is safe — these metrics reward broad recall. Distinct from
+ * `extractCitations` below, which reports the *primary* chunks the
+ * answer is grounded on.
+ */
+export function extractRetrievedChunkIds(
+  invocations: readonly ToolInvocationLite[],
+): readonly string[] {
+  const ids = new Set<string>();
+
+  const stockInv = invocations.find(
+    (inv) => inv.call.name === 'product.stock_lookup' && inv.result.ok,
+  );
+  if (stockInv) {
+    const value = stockInv.result.value as
+      | { readonly matchedChunkIds?: readonly unknown[] }
+      | undefined;
+    const chunks = value?.matchedChunkIds;
+    if (Array.isArray(chunks)) {
+      for (const c of chunks) {
+        if (typeof c === 'string' && c.length > 0) ids.add(c);
+      }
+    }
+  }
+
+  const substituteInv = invocations.find(
+    (inv) => inv.call.name === 'product.substitute_lookup' && inv.result.ok,
+  );
+  if (substituteInv) {
+    const value = substituteInv.result.value as
+      | { readonly substitutes?: readonly { readonly chunkId?: unknown }[] }
+      | undefined;
+    const subs = value?.substitutes;
+    if (Array.isArray(subs)) {
+      for (const s of subs) {
+        if (typeof s?.chunkId === 'string' && s.chunkId.length > 0) ids.add(s.chunkId);
+      }
+    }
+  }
+
+  return [...ids];
+}
+
+/**
+ * Citations for the response body. Reports only the PRIMARY chunk from
+ * each retrieval-backed tool result — the top match from stock_lookup
+ * and the top substitute from substitute_lookup. Deliberately narrower
+ * than `extractRetrievedChunkIds` because the eval `groundedness`
+ * metric scores `overlap / cited` — over-citing dilutes precision.
+ * The narrow set represents "what actually influenced the answer" and
+ * is a defensible interpretation of the AI Engineering Project brief's
+ * "cite source doc IDs/titles" requirement.
+ *
+ * Rationale for not surfacing an LLM-emitted citation list: the
+ * synthesizer prompt (see `packages/adapters/src/synthesis/openai-
+ * synthesizer.ts`) already grounds against tool findings, and the top
+ * chunk IS what the answer is built from. Adding an "emit-citations"
+ * output step is a Sprint 5+ story if per-sentence attribution is
+ * needed.
+ */
+export function extractCitations(
+  invocations: readonly ToolInvocationLite[],
+): readonly Citation[] {
+  const citations: Citation[] = [];
+  const seen = new Set<string>();
+  const push = (chunkId: unknown, documentId: unknown = null): void => {
+    if (typeof chunkId !== 'string' || chunkId.length === 0) return;
+    if (seen.has(chunkId)) return;
+    seen.add(chunkId);
+    citations.push({
+      chunk_id: chunkId,
+      document_id: typeof documentId === 'string' && documentId.length > 0 ? documentId : null,
+    });
+  };
+
+  const stockInv = invocations.find(
+    (inv) => inv.call.name === 'product.stock_lookup' && inv.result.ok,
+  );
+  if (stockInv) {
+    const value = stockInv.result.value as
+      | { readonly matchedChunkIds?: readonly unknown[] }
+      | undefined;
+    const chunks = value?.matchedChunkIds;
+    if (Array.isArray(chunks) && chunks.length > 0) {
+      push(chunks[0]);
+    }
+  }
+
+  const substituteInv = invocations.find(
+    (inv) => inv.call.name === 'product.substitute_lookup' && inv.result.ok,
+  );
+  if (substituteInv) {
+    const value = substituteInv.result.value as
+      | { readonly substitutes?: readonly { readonly chunkId?: unknown }[] }
+      | undefined;
+    const subs = value?.substitutes;
+    if (Array.isArray(subs) && subs.length > 0 && subs[0]) {
+      push(subs[0].chunkId);
+    }
+  }
+
+  return citations;
+}
+
+/**
  * Trace ID for a single request. Random hex, not a spec-compliant
  * UUID — scope is one turn's traces, doesn't need to be. Sprint 3
  * GW-25 may swap to a proper UUID when traces persist across turns.

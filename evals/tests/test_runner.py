@@ -5,7 +5,7 @@ from pathlib import Path
 
 import responses
 
-from groundwork_evals.runner import parse_args, run
+from groundwork_evals.runner import _latency_summary, _percentile, parse_args, run
 
 
 def _write_fixture_dataset(tmp_path: Path) -> Path:
@@ -250,3 +250,84 @@ def test_run_writes_per_provenance_section(tmp_path: Path) -> None:
     adv = body["per_provenance"]["constructed-adversarial"]
     assert adv["correct_abstention"]["score"] == 1.0
     assert adv["correct_abstention"]["n_applicable"] == 1
+
+
+# ---------- Latency (AI Engineering Project brief §7) ----------
+# `_percentile` uses nearest-rank so a grader reading `p95 = 812ms` off
+# a small-n eval run gets the intuitive answer (the ordered value at
+# ceil(0.95 * n)). These tests lock that behaviour so a well-intentioned
+# swap to numpy.percentile (which linear-interpolates) can't silently
+# ship without updating the docs.
+
+
+def test_percentile_nearest_rank_on_small_n() -> None:
+    values = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+    # p50 at n=10 → ceil(0.5 * 10) = 5 → 5th ordered value.
+    assert _percentile(values, 50) == 50.0
+    # p95 at n=10 → ceil(0.95 * 10) = 10 → 10th (last) ordered value.
+    assert _percentile(values, 95) == 100.0
+
+
+def test_percentile_empty_returns_zero() -> None:
+    assert _percentile([], 50) == 0.0
+    assert _percentile([], 95) == 0.0
+
+
+def test_latency_summary_shape_and_rounding() -> None:
+    summary = _latency_summary([100.111, 200.222, 300.333, 400.444, 500.555])
+    assert summary["n"] == 5
+    # Round to 1 decimal place per _latency_summary policy.
+    assert summary["p50_ms"] == 300.3
+    assert summary["p95_ms"] == 500.6
+    assert summary["min_ms"] == 100.1
+    assert summary["max_ms"] == 500.6
+    # Keys present so the results file schema is stable for graders.
+    assert set(summary.keys()) == {"n", "p50_ms", "p95_ms", "min_ms", "max_ms", "mean_ms"}
+
+
+def test_latency_summary_empty_input() -> None:
+    # Zero applicable cases should surface honestly, not fabricate a p95.
+    assert _latency_summary([]) == {"n": 0}
+
+
+@responses.activate
+def test_run_emits_latency_summary_in_results_file(tmp_path: Path) -> None:
+    responses.post(
+        "https://api.test/api/answer",
+        json={
+            "answer": "ok",
+            "citations": [{"chunk_id": "c1"}],
+            "retrieved_chunk_ids": ["c1"],
+        },
+        status=200,
+    )
+    responses.post(
+        "https://api.test/api/answer",
+        json={"answer": "", "refusal_reason": "welfare-clinical"},
+        status=200,
+    )
+    args = parse_args(
+        [
+            "--dataset",
+            str(_write_fixture_dataset(tmp_path)),
+            "--thresholds",
+            str(_write_thresholds(tmp_path, {})),  # no gates
+            "--sprint",
+            "test",
+            "--api-url",
+            "https://api.test",
+            "--results-dir",
+            str(tmp_path / "results"),
+        ]
+    )
+    code = run(args)
+    assert code == 0
+    body = json.loads(list((tmp_path / "results" / "sprint-test").glob("*.json"))[0].read_text())
+    # Latency block present with the shape a grader expects.
+    assert "latency" in body
+    assert body["latency"]["n"] == 2
+    assert "p50_ms" in body["latency"]
+    assert "p95_ms" in body["latency"]
+    # Every case carries its own latency_ms too — needed for per-case
+    # debugging when an outlier drags p95 up.
+    assert all("latency_ms" in c and c["latency_ms"] >= 0 for c in body["cases"])

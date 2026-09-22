@@ -836,6 +836,84 @@ describe('POST /api/answer', () => {
     expect(body['rewritten_query']).toBeNull();
   });
 
+  // ---------- Sprint 4 (capstone): citations surfaced on the response ----------
+  //
+  // The AI Engineering Project brief requires "Always cite source doc
+  // IDs/titles for answers" and the eval harness `groundedness` metric
+  // in `evals/groundwork_evals/metrics.py` scores 0 when citations are
+  // empty. These tests guard against regressing back to the hardcoded
+  // `citations: []` shape.
+
+  it('stock_lookup with matchedChunkIds → citations + retrieved_chunk_ids populate', async () => {
+    const app = createAnswerRoute(
+      makeDepsWithRealPlanner(productRouter('haynets'), {
+        'product.stock_lookup': {
+          ok: true,
+          value: {
+            status: 'exact',
+            matchedChunkIds: ['chunk-haynet-1', 'chunk-haynet-2'],
+            matchedHandle: 'haynet-small',
+          },
+        },
+      }),
+    );
+    const res = await post(app, { query: 'do you sell haynets' });
+    const body = (await res.json()) as Record<string, unknown>;
+
+    // Citation set is narrow — the primary (top) matched chunk only.
+    // Precision matters because the eval `groundedness` metric scores
+    // overlap/cited; over-citing dilutes.
+    const citations = body['citations'] as Array<{ chunk_id: string }>;
+    expect(citations.map((c) => c.chunk_id)).toEqual(['chunk-haynet-1']);
+
+    // Retrieved-chunk-ids is broad — feeds recall@k / retrieval_
+    // relevance metrics which reward covering the required set.
+    expect(body['retrieved_chunk_ids']).toEqual(['chunk-haynet-1', 'chunk-haynet-2']);
+  });
+
+  it('stock_lookup + substitute_lookup both contribute one citation each', async () => {
+    const app = createAnswerRoute(
+      makeDepsWithRealPlanner(productRouter('haygates conditioning cubes'), {
+        'product.stock_lookup': {
+          ok: true,
+          value: { status: 'orderable', matchedChunkIds: ['chunk-stock-top'] },
+        },
+        'product.substitute_lookup': {
+          ok: true,
+          value: {
+            substitutes: [
+              { handle: 'hilight', chunkId: 'chunk-sub-top' },
+              { handle: 'other', chunkId: 'chunk-sub-2' },
+            ],
+          },
+        },
+      }),
+    );
+    const res = await post(app, { query: 'do you stock haygates conditioning cubes' });
+    const body = (await res.json()) as Record<string, unknown>;
+
+    // Both tools contribute their top chunk; substitutes 2+ excluded
+    // from the narrow citation set.
+    const citations = body['citations'] as Array<{ chunk_id: string }>;
+    expect(citations.map((c) => c.chunk_id)).toEqual(['chunk-stock-top', 'chunk-sub-top']);
+
+    // Full retrieval set includes every chunk from every tool.
+    expect(body['retrieved_chunk_ids']).toEqual([
+      'chunk-stock-top',
+      'chunk-sub-top',
+      'chunk-sub-2',
+    ]);
+  });
+
+  it('non-answer behaviour (abstain) → empty citations, empty retrieved_chunk_ids', async () => {
+    const app = createAnswerRoute(makeDeps(new StubRouter('out-of-scope')));
+    const res = await post(app, { query: 'what is the weather' });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['behavior']).toBe('abstain');
+    expect(body['citations']).toEqual([]);
+    expect(body['retrieved_chunk_ids']).toEqual([]);
+  });
+
   it('pre-GW-16 deps (no conversation store) still work; conversation_id is null', async () => {
     // Back-compat guard: AnswerDeps.conversationStore and .contextRewriter
     // are optional in the interface. Existing tests + local dev without

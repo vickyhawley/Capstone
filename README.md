@@ -21,6 +21,43 @@ plan doesn't allow adding new `*.vercel.app` aliases after the fact. The
 Vercel project itself is renamed to `groundwork-web`; only the auto-minted
 public alias still carries the older name.
 
+## Corpus and scope (AI Engineering Project brief)
+
+The AI Engineering Project brief calls for a RAG application over a
+"corpus of company policies & procedures." This project answers that
+brief with a **customer-facing policy corpus** for a specialist equine
+retailer rather than the more common employee-facing HR set (PTO,
+expense, remote-work). Same shape of grounded-Q&A problem; different
+audience.
+
+The corpus (in `data/`, ~35 pages total) covers the policies a
+prospective customer actually needs to know before ordering:
+
+| File | Policy topic |
+|---|---|
+| `data/guides/delivery.md` | Delivery zones, postcode eligibility, cut-offs |
+| `data/guides/opening-hours.md` | Shop hours, bank-holiday rota, out-of-hours contact |
+| `data/guides/rug-sizing.md` | Sizing / fit guidance (customer self-service) |
+| `data/nfcs-shop-info.yaml` | Contact routes, ordering channels, subscription eligibility |
+| `data/nfcs-out-of-scope.yaml` | Brands / categories the shop won't stock (policy: what we say no to) |
+| `data/nfcs-pending.yaml` | Products temporarily out of stock (policy: what we say "not right now" to) |
+| `data/delivery-districts.yaml` | Delivery-district → zone mapping (rule table) |
+| `data/catalogue/products.csv` | Product catalogue (398 products, 1,454 variants) |
+
+These are policies the way a shop reasons about its own operations:
+what we sell, where we deliver, when we're open, what we won't touch,
+and where welfare questions must be escalated. Two of them
+(`nfcs-out-of-scope.yaml`, `nfcs-pending.yaml`) are literally policy
+lists — the shop's explicit rules about which products it will refuse
+to stock and why. The safety gate (see `docs/adr/0011-safety-gate.md`)
+enforces one more policy: welfare/clinical questions escalate to a
+vet, never to the assistant.
+
+The eval harness (65 cases in `evals/datasets/sprint-1/cases.jsonl`,
+real customer questions from the shop's social-DM export, PII-stripped)
+targets these policy surfaces plus the retrieval-grounded product
+Q&A they compose with.
+
 ## Project board
 
 See [`docs/project-board.md`](docs/project-board.md) for the full
@@ -34,9 +71,9 @@ options with cost implications, and testing methodology).
 
 ## CI status
 
-![CI](https://github.com/TODO/groundwork/actions/workflows/ci.yml/badge.svg)
-![Evals](https://github.com/TODO/groundwork/actions/workflows/evals.yml/badge.svg)
-![Red team](https://github.com/TODO/groundwork/actions/workflows/redteam.yml/badge.svg)
+![CI](https://github.com/vickyhawley/Capstone/actions/workflows/ci.yml/badge.svg)
+![Evals](https://github.com/vickyhawley/Capstone/actions/workflows/evals.yml/badge.svg)
+![Red team](https://github.com/vickyhawley/Capstone/actions/workflows/redteam.yml/badge.svg)
 
 ## Quickstart
 
@@ -64,6 +101,41 @@ pnpm lint
 pnpm test
 pnpm check:core-purity
 ```
+
+## Reproducibility
+
+The brief asks about fixed seeds "for deterministic chunking or evaluation
+sampling." This project doesn't need seed setup because:
+
+- **Chunking is content-hash deterministic**, not random. See
+  [ADR-0013 (`docs/adr/0013-deterministic-chunk-ids.md`)](docs/adr/0013-deterministic-chunk-ids.md):
+  every chunk ID is `hash(document_id, ordinal, content)`. Re-ingesting
+  the same document produces byte-identical chunk IDs across runs.
+- **Eval sampling is exhaustive**, not sampled. The runner iterates
+  every case in the dataset; no random sub-selection.
+- **Embedding calls are the one non-deterministic step** — OpenAI's
+  `text-embedding-3-small` isn't temperature-controlled. Retrieval
+  results can drift slightly across runs on the same query. This is
+  named as a known limitation in `docs/design-and-testing.md`. The
+  eval harness tolerates it because the metrics (groundedness,
+  recall@k) measure set overlap, not exact ordering.
+
+For anyone re-running the eval harness against the deployed API:
+
+```bash
+cd evals
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+groundwork-evals \
+  --dataset datasets/sprint-1/cases.jsonl \
+  --thresholds thresholds/sprint-2.json \
+  --sprint capstone \
+  --api-url https://groundwork-api.vercel.app
+```
+
+Results land in `evals/results/sprint-capstone/<timestamp>.json` with
+the full breakdown (per-metric aggregates, per-provenance slices,
+per-case latency, threshold breaches).
 
 ## Architecture
 

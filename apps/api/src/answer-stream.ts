@@ -28,8 +28,10 @@ import { streamSSE } from 'hono/streaming';
 import type { AnswerDeps } from './answer.js';
 import { MAX_ITERATIONS, TIME_BUDGET_MS } from './limits.js';
 import {
+  extractCitations,
   extractDeliveryZoneStatus,
   extractProductLinks,
+  extractRetrievedChunkIds,
   extractSubstituteHandles,
   generateTraceId,
 } from './tool-output.js';
@@ -124,6 +126,8 @@ export function createAnswerStreamRoute(deps: AnswerDeps): Hono {
               substitute_handles: [],
               delivery_zone_status: null,
               product_links: [],
+              citations: [],
+              retrieved_chunk_ids: [],
               conversation_id: conversationId,
               rewritten_query: rewritten,
               degraded_reason: null,
@@ -214,6 +218,8 @@ export function createAnswerStreamRoute(deps: AnswerDeps): Hono {
         const substituteHandles = extractSubstituteHandles(loopResult.toolInvocations);
         const deliveryZoneStatus = extractDeliveryZoneStatus(loopResult.toolInvocations);
         const productLinks = extractProductLinks(loopResult.toolInvocations);
+        const citations = extractCitations(loopResult.toolInvocations);
+        const retrievedChunkIds = extractRetrievedChunkIds(loopResult.toolInvocations);
         await stream.writeSSE({
           event: 'done',
           data: JSON.stringify({
@@ -229,6 +235,8 @@ export function createAnswerStreamRoute(deps: AnswerDeps): Hono {
             substitute_handles: substituteHandles,
             delivery_zone_status: deliveryZoneStatus,
             product_links: productLinks,
+            citations,
+            retrieved_chunk_ids: retrievedChunkIds,
             conversation_id: conversationId,
             rewritten_query: rewritten,
             degraded_reason: null,
@@ -266,6 +274,8 @@ export function createAnswerStreamRoute(deps: AnswerDeps): Hono {
             substitute_handles: [],
             delivery_zone_status: null,
             product_links: [],
+            citations: [],
+            retrieved_chunk_ids: [],
             conversation_id: conversationId,
             rewritten_query: null,
             degraded_reason: message,
