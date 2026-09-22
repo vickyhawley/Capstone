@@ -39,9 +39,17 @@ export interface ProductLink {
   readonly priceMax: number | null;
 }
 
+/** Mirrors the API's `Citation` (apps/api/src/tool-output.ts) and the
+ *  Python eval schema. `chunk_id` is the primary retrieval-backed source
+ *  the answer is grounded on; `document_id` is best-effort. */
+export interface Citation {
+  readonly chunk_id: string;
+  readonly document_id: string | null;
+}
+
 export interface AnswerResponse {
   readonly answer: string;
-  readonly citations: readonly unknown[];
+  readonly citations: readonly Citation[];
   readonly retrieved_chunk_ids: readonly string[];
   readonly refusal_reason: string | null;
   readonly trace_id: string | null;

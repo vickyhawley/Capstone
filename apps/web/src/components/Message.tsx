@@ -310,6 +310,28 @@ function EvidencePanel({
             <dd>Suspicious input detected</dd>
           </>
         ) : null}
+        {response.rewritten_query ? (
+          <>
+            <dt>Rewritten query</dt>
+            <dd>{response.rewritten_query}</dd>
+          </>
+        ) : null}
+        {response.citations.length > 0 ? (
+          <>
+            <dt>Citations</dt>
+            <dd className={styles.trace}>
+              {response.citations.map((c) => c.chunk_id).join(', ')}
+            </dd>
+          </>
+        ) : null}
+        {response.retrieved_chunk_ids.length > 0 ? (
+          <>
+            <dt>Retrieved chunks</dt>
+            <dd className={styles.trace}>
+              {response.retrieved_chunk_ids.length} · {response.retrieved_chunk_ids.join(', ')}
+            </dd>
+          </>
+        ) : null}
         {response.trace_id ? (
           <>
             <dt>Reference</dt>

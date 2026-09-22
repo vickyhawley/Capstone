@@ -69,8 +69,11 @@ export interface StreamAnswerCallbacks {
   readonly onAnswerDelta?: (event: { readonly text: string }) => void;
   /** The final done event carries the same fields as AnswerResponse
    *  minus the streamed `answer` text (which the caller assembled
-   *  from onAnswerDelta). Shape is Omit<AnswerResponse, ...>. */
-  readonly onDone?: (metadata: Omit<AnswerResponse, 'answer' | 'citations' | 'retrieved_chunk_ids'>) => void;
+   *  from onAnswerDelta). `citations` and `retrieved_chunk_ids` flow
+   *  through so the evidence panel can render the grounding surface —
+   *  they are the customer-visible evidence the demo script leans on
+   *  and the same fields the eval harness's groundedness metric reads. */
+  readonly onDone?: (metadata: Omit<AnswerResponse, 'answer'>) => void;
 }
 
 /**

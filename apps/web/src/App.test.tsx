@@ -19,8 +19,10 @@ import type { AnswerResponse } from './api/types.js';
 
 const CANNED_ANSWER: AnswerResponse = {
   answer: 'Yes, we stock HorseHage Timothy — in stock.',
-  citations: [],
-  retrieved_chunk_ids: [],
+  citations: [
+    { chunk_id: 'chunk-horsehage-timothy-1', document_id: 'product-horsehage-timothy' },
+  ],
+  retrieved_chunk_ids: ['chunk-horsehage-timothy-1', 'chunk-horsehage-timothy-2'],
   refusal_reason: null,
   trace_id: 'trace-abc',
   intent: 'product',
@@ -56,14 +58,7 @@ function sseStreamFromCanned(canned: AnswerResponse): ReadableStream<Uint8Array>
   const encoder = new TextEncoder();
   const frame = (event: string, data: unknown): string =>
     `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  const {
-    answer,
-    citations: _citations,
-    retrieved_chunk_ids: _chunks,
-    ...metadata
-  } = canned;
-  void _citations;
-  void _chunks;
+  const { answer, ...metadata } = canned;
   return new ReadableStream({
     start(controller) {
       controller.enqueue(encoder.encode(frame('answer-delta', { text: answer })));
@@ -167,5 +162,14 @@ describe('App — chat shell smoke', () => {
     expect(screen.getByText(/Checked stock/)).toBeTruthy();
     // trace_id truncated to first 8 chars for the Reference row.
     expect(screen.getByText('trace-ab')).toBeTruthy();
+    // Citations row surfaces the grounding chunk. Same field the eval
+    // harness's groundedness metric reads — regression here means the
+    // client is silently discarding it again (see GW-01-shape gap).
+    expect(screen.getByText('chunk-horsehage-timothy-1')).toBeTruthy();
+    // Retrieved-chunks row is distinct from citations and shows the
+    // broader recall set (count + IDs).
+    expect(
+      screen.getByText('2 · chunk-horsehage-timothy-1, chunk-horsehage-timothy-2'),
+    ).toBeTruthy();
   });
 });
