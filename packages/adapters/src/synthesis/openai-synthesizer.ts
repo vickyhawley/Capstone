@@ -41,10 +41,12 @@ import type {
   SynthesizerOutput,
   ToolInvocationRecord,
 } from '@groundwork/core';
+import type { ConversationTurn } from '@groundwork/core';
 import type OpenAI from 'openai';
 import type {
   ChatCompletion,
   ChatCompletionChunk,
+  ChatCompletionMessageParam,
 } from 'openai/resources/chat/completions.js';
 import type { Stream } from 'openai/streaming.js';
 
@@ -97,10 +99,7 @@ export class OpenAiSynthesizer implements Synthesizer {
     const call = async (): Promise<ChatCompletion> =>
       (await this.openai.chat.completions.create({
         model: SYNTHESIZER_MODEL,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userMessage },
-        ],
+        messages: buildMessages(SYSTEM_PROMPT, input.history, userMessage),
         temperature: 0.2,
         max_tokens: 400,
       })) as ChatCompletion;
@@ -146,10 +145,7 @@ export class OpenAiSynthesizer implements Synthesizer {
     const call = async (): Promise<Stream<ChatCompletionChunk>> => {
       const result = await this.openai.chat.completions.create({
         model: SYNTHESIZER_MODEL,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userMessage },
-        ],
+        messages: buildMessages(SYSTEM_PROMPT, input.history, userMessage),
         temperature: 0.2,
         max_tokens: 400,
         stream: true,
@@ -174,6 +170,40 @@ export class OpenAiSynthesizer implements Synthesizer {
       yield { text: '', done: true };
     }
   }
+}
+
+/**
+ * GW-16: build the OpenAI messages array with conversation history
+ * interleaved between the system prompt and the current user turn.
+ *
+ * Shape: [system, user_1, assistant_1, ..., user_N, assistant_N,
+ * current_user_message]. The current turn's user message carries
+ * the tool findings block, so the model grounds its answer against
+ * fresh data — history is context, findings are ground truth.
+ *
+ * History is capped at HISTORY_MESSAGES_MAX to bound the input-
+ * token cost; older turns are dropped from the head rather than
+ * summarised (summarisation is a post-capstone story). Cap is
+ * generous relative to typical shop conversations (~2-4 turns).
+ */
+const HISTORY_MESSAGES_MAX = 10;
+
+function buildMessages(
+  systemPrompt: string,
+  history: readonly ConversationTurn[] | undefined,
+  currentUserMessage: string,
+): ChatCompletionMessageParam[] {
+  const messages: ChatCompletionMessageParam[] = [
+    { role: 'system', content: systemPrompt },
+  ];
+  if (history && history.length > 0) {
+    const capped = history.slice(-HISTORY_MESSAGES_MAX);
+    for (const turn of capped) {
+      messages.push({ role: turn.role, content: turn.text });
+    }
+  }
+  messages.push({ role: 'user', content: currentUserMessage });
+  return messages;
 }
 
 /**

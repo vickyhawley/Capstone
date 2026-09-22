@@ -50,6 +50,9 @@ export {
 } from './router/rules.js';
 export { StubTraceSink } from './trace-sink/stub-trace-sink.js';
 export { SupabaseTraceSink } from './trace-sink/supabase-trace-sink.js';
+export { StubConversationStore } from './conversation-store/stub-conversation-store.js';
+export { SupabaseConversationStore } from './conversation-store/supabase-conversation-store.js';
+export { REWRITER_MODEL, rewriteWithContext, type ContextRewriterDeps } from './router/context-rewriter.js';
 export { NoopPlanner } from './planner/noop-planner.js';
 export { RouteBasedPlanner } from './planner/route-based-planner.js';
 export {

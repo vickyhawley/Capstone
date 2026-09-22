@@ -2,6 +2,7 @@ import {
   NoopPlanner,
   RouteBasedPlanner,
   RulesSafetyGate,
+  StubConversationStore,
   StubRouter,
   StubSynthesizer,
   StubToolRegistry,
@@ -9,7 +10,10 @@ import {
 } from '@groundwork/adapters';
 import { ABSTAIN_COPY, ESCALATION_COPY } from '@groundwork/core';
 import type {
+  ConversationTurn,
   Router,
+  RouterDecision,
+  RouterQuery,
   ToolDefinition,
   ToolInvocation,
   ToolRegistry,
@@ -658,5 +662,193 @@ describe('POST /api/answer', () => {
     expect(body['escalation_target']).toBe('staff-order');
     expect(body['answer']).toBe(ESCALATION_COPY['staff-order']);
     expect(body['degraded_reason']).toBe('simulated openai 5xx');
+  });
+
+  // ---------- GW-16 (ADR-0017): conversation memory + context rewrite ----------
+  //
+  // End-to-end test that a second POST with the conversation_id from
+  // turn 1 flows through the whole load-history → rewrite → route →
+  // synth → append pipeline. The invariants under test come straight
+  // from ADR-0017: rewrite runs only when history exists (§3), the
+  // router sees the rewritten text (§3), and the store keeps the
+  // ORIGINAL user text — not the rewrite — because that's what the
+  // customer actually said (port contract in
+  // packages/core/src/ports/conversation-store.ts).
+
+  interface RouterCall {
+    readonly text: string;
+  }
+  interface RewriterCall {
+    readonly query: string;
+    readonly history: readonly ConversationTurn[];
+  }
+
+  function capturingRouter(calls: RouterCall[]): Router {
+    return {
+      async route(q: RouterQuery): Promise<RouterDecision> {
+        calls.push({ text: q.text });
+        return {
+          intent: 'product',
+          confidence: 1.0,
+          rationale: 'test',
+          matched: 'llm',
+          adversarialSuspected: false,
+        };
+      },
+    };
+  }
+
+  function capturingRewriter(
+    calls: RewriterCall[],
+    rewriteTo: string,
+  ): (query: string, history: readonly ConversationTurn[]) => Promise<string> {
+    return async (query, history) => {
+      calls.push({ query, history: [...history] });
+      return rewriteTo;
+    };
+  }
+
+  it('turn 1 mints a conversation_id, skips the rewriter, and persists both sides', async () => {
+    const routerCalls: RouterCall[] = [];
+    const rewriterCalls: RewriterCall[] = [];
+    const store = new StubConversationStore();
+    const deps: AnswerDeps = {
+      ...makeDeps(capturingRouter(routerCalls)),
+      conversationStore: store,
+      contextRewriter: capturingRewriter(rewriterCalls, 'UNUSED'),
+    };
+    const app = createAnswerRoute(deps);
+
+    const res = await post(app, { query: 'do you sell hemp bedding' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+
+    // Empty-history path: rewriter never called; router saw the
+    // original text; response echoes rewritten_query as null (nothing
+    // to surface in the evidence panel).
+    expect(rewriterCalls).toHaveLength(0);
+    expect(routerCalls).toEqual([{ text: 'do you sell hemp bedding' }]);
+    expect(body['rewritten_query']).toBeNull();
+
+    // Server-minted id; stub format is 'stub-conv-NNNN'.
+    const conversationId = body['conversation_id'];
+    expect(typeof conversationId).toBe('string');
+    expect(conversationId).toMatch(/^stub-conv-\d{4}$/);
+
+    // Persistence: user turn holds the verbatim query, assistant turn
+    // holds the synthesized answer. Order matters — user first.
+    const conv = await store.get(conversationId as string);
+    expect(conv).not.toBeNull();
+    expect(conv?.history.map((t) => ({ role: t.role, text: t.text }))).toEqual([
+      { role: 'user', text: 'do you sell hemp bedding' },
+      { role: 'assistant', text: 'stub-synth-answer' },
+    ]);
+  });
+
+  it('turn 2 with the same conversation_id runs the rewriter on prior history and routes on the rewrite', async () => {
+    const routerCalls: RouterCall[] = [];
+    const rewriterCalls: RewriterCall[] = [];
+    const store = new StubConversationStore();
+    const deps: AnswerDeps = {
+      ...makeDeps(capturingRouter(routerCalls)),
+      conversationStore: store,
+      contextRewriter: capturingRewriter(
+        rewriterCalls,
+        'do you sell hemp bedding alternatives',
+      ),
+    };
+    const app = createAnswerRoute(deps);
+
+    // Turn 1 — seed the conversation.
+    const t1 = (await (await post(app, { query: 'do you sell hemp bedding' })).json()) as {
+      conversation_id: string;
+    };
+    const conversationId = t1.conversation_id;
+
+    // Turn 2 — ambiguous follow-up that only makes sense given the
+    // prior turn's referent ("similar" → similar to hemp bedding).
+    const res = await post(app, {
+      query: 'do you have anything else similar',
+      conversation_id: conversationId,
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+
+    // Rewriter fired exactly once (turn 2 only) with the accumulated
+    // 2-turn history from turn 1.
+    expect(rewriterCalls).toHaveLength(1);
+    expect(rewriterCalls[0]?.query).toBe('do you have anything else similar');
+    expect(rewriterCalls[0]?.history.map((t) => t.text)).toEqual([
+      'do you sell hemp bedding',
+      'stub-synth-answer',
+    ]);
+
+    // Router saw the ORIGINAL text on turn 1 and the REWRITTEN text
+    // on turn 2 — the whole point of the pipeline.
+    expect(routerCalls.map((c) => c.text)).toEqual([
+      'do you sell hemp bedding',
+      'do you sell hemp bedding alternatives',
+    ]);
+
+    // Response quotes the same conversation_id (no new one minted)
+    // and surfaces the rewritten query for the evidence panel.
+    expect(body['conversation_id']).toBe(conversationId);
+    expect(body['rewritten_query']).toBe('do you sell hemp bedding alternatives');
+
+    // Store now holds 4 turns; the appended user turn keeps the
+    // CUSTOMER'S ORIGINAL words, not the rewrite (ADR-0017 §3, port
+    // contract — history is what the customer actually said).
+    const conv = await store.get(conversationId);
+    expect(conv?.history.map((t) => ({ role: t.role, text: t.text }))).toEqual([
+      { role: 'user', text: 'do you sell hemp bedding' },
+      { role: 'assistant', text: 'stub-synth-answer' },
+      { role: 'user', text: 'do you have anything else similar' },
+      { role: 'assistant', text: 'stub-synth-answer' },
+    ]);
+  });
+
+  it('turn 2 with a stale/unknown conversation_id starts a fresh conversation, not an error', async () => {
+    // ADR-0017: a client sending an id the server doesn't recognise
+    // (retention rotation, out-of-band delete) is treated as turn 1
+    // with a new id, not as a 4xx. Failing here would break the web
+    // client on any user who reloads after retention runs.
+    const routerCalls: RouterCall[] = [];
+    const rewriterCalls: RewriterCall[] = [];
+    const store = new StubConversationStore();
+    const deps: AnswerDeps = {
+      ...makeDeps(capturingRouter(routerCalls)),
+      conversationStore: store,
+      contextRewriter: capturingRewriter(rewriterCalls, 'UNUSED'),
+    };
+    const app = createAnswerRoute(deps);
+
+    const res = await post(app, {
+      query: 'do you sell haynets',
+      conversation_id: 'stub-conv-9999',
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+
+    // Rewriter did not run (no history under the fresh id), router
+    // saw the original text, response carries a NEWLY-minted id.
+    expect(rewriterCalls).toHaveLength(0);
+    expect(routerCalls).toEqual([{ text: 'do you sell haynets' }]);
+    expect(body['conversation_id']).not.toBe('stub-conv-9999');
+    expect(body['conversation_id']).toMatch(/^stub-conv-\d{4}$/);
+    expect(body['rewritten_query']).toBeNull();
+  });
+
+  it('pre-GW-16 deps (no conversation store) still work; conversation_id is null', async () => {
+    // Back-compat guard: AnswerDeps.conversationStore and .contextRewriter
+    // are optional in the interface. Existing tests + local dev without
+    // Supabase creds should keep working with a slim deps object.
+    const routerCalls: RouterCall[] = [];
+    const deps = makeDeps(capturingRouter(routerCalls));
+    const app = createAnswerRoute(deps);
+
+    const res = await post(app, { query: 'do you sell haynets' });
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(body['conversation_id']).toBeNull();
+    expect(body['rewritten_query']).toBeNull();
+    expect(routerCalls).toEqual([{ text: 'do you sell haynets' }]);
   });
 });

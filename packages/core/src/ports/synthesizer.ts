@@ -31,6 +31,7 @@
  * a defensive fallback ("The shop can help you with this — give us
  * a call") is better than nothing.
  */
+import type { ConversationTurn } from './conversation-store.js';
 import type { ToolInvocationRecord } from './planner.js';
 import type { RouterDecision, RouterQuery } from './router.js';
 
@@ -38,6 +39,13 @@ export interface SynthesizerInput {
   readonly query: RouterQuery;
   readonly routerDecision: RouterDecision;
   readonly toolResults: readonly ToolInvocationRecord[];
+  /** GW-16: prior turns in the conversation, oldest first. Empty for
+   *  turn 1. Adapters interleave these into the OpenAI messages
+   *  array so answers stay coherent across the conversation (no
+   *  repeating a caveat the customer already acknowledged, no
+   *  contradicting an earlier statement). Optional — pre-GW-16
+   *  tests pass without it and get single-turn behaviour. */
+  readonly history?: readonly ConversationTurn[];
 }
 
 export interface SynthesizerOutput {

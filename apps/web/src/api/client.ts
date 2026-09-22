@@ -28,11 +28,14 @@ export class ApiError extends Error {
   }
 }
 
-export async function postAnswer(query: string): Promise<AnswerResponse> {
+export async function postAnswer(
+  query: string,
+  conversationId?: string | null,
+): Promise<AnswerResponse> {
   const res = await fetch('/api/answer', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, ...(conversationId ? { conversation_id: conversationId } : {}) }),
   });
   if (!res.ok) {
     throw new ApiError(res.status, await res.text());
@@ -81,7 +84,7 @@ export interface StreamAnswerCallbacks {
 export async function streamAnswer(
   query: string,
   callbacks: StreamAnswerCallbacks,
-  signal?: AbortSignal,
+  options?: { readonly signal?: AbortSignal; readonly conversationId?: string | null },
 ): Promise<void> {
   const res = await fetch('/api/answer/stream', {
     method: 'POST',
@@ -89,8 +92,11 @@ export async function streamAnswer(
       'content-type': 'application/json',
       accept: 'text/event-stream',
     },
-    body: JSON.stringify({ query }),
-    ...(signal ? { signal } : {}),
+    body: JSON.stringify({
+      query,
+      ...(options?.conversationId ? { conversation_id: options.conversationId } : {}),
+    }),
+    ...(options?.signal ? { signal: options.signal } : {}),
   });
   if (!res.ok || !res.body) {
     throw new ApiError(res.status, await res.text().catch(() => ''));

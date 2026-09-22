@@ -1,5 +1,5 @@
 -- ============================================================================
--- Groundwork initial schema
+-- Groundwork initial schema — data + retrieval only.
 -- ----------------------------------------------------------------------------
 -- Design target: ~50k chunks, ~10k products (see docs/adr/0001).
 -- Sprint 1 seed:  ~5k chunks,  ~500-1000 products.
@@ -9,6 +9,19 @@
 -- grows through Sprints 2+. If real-world scale departs materially from the
 -- design target, revisit `m` and `ef_construction` in a follow-up migration
 -- rather than editing this one.
+--
+-- Scope note (2026-09-22): earlier revisions of this file also defined
+--   - `conversations` (session table with `user_ref`, `channel`, ...)
+--   - `messages`      (per-turn message log)
+--   - `traces`        (`id uuid` PK, `span_kind` enum, FK to conversations)
+-- Those three were scaffolding for a plan that got superseded before any
+-- code was written against them. The authoritative shapes now live in:
+--   - migration 004 — traces (ADR-0015, flat single table keyed on
+--     (trace_id, span_id), `kind` field, no FK back to conversations)
+--   - migration 005 — conversations (ADR-0017, single-row JSONB history)
+-- On any environment that ran the pre-cleanup 001, migration 005 drops
+-- the legacy `conversations` + `messages` tables before creating the
+-- new shape. See 005 for the drop-cascade rationale.
 -- ============================================================================
 
 create extension if not exists vector;
@@ -104,68 +117,12 @@ create index if not exists products_brand_idx on products (brand);
 create index if not exists products_name_trgm_idx on products using gin (name gin_trgm_ops);
 
 -- ============================================================================
--- conversations
--- One row per user session. Referenced by messages and traces.
+-- conversations / messages / traces — moved out of 001 (see file header).
+--   - traces live in migration 004 (ADR-0015).
+--   - conversations live in migration 005 (ADR-0017).
+--   - messages was scaffolding for a per-turn log that never got wired;
+--     the concept lives inside `conversations.history` (JSONB) now.
 -- ============================================================================
-create table if not exists conversations (
-  id             uuid primary key default gen_random_uuid(),
-  user_ref       text,                             -- opaque anonymised user identifier; null for pre-login
-  started_at     timestamptz not null default now(),
-  ended_at       timestamptz,                      -- populated when the session closes cleanly
-  channel        text not null default 'web',      -- 'web', 'staff-review', future channels
-  metadata       jsonb not null default '{}'::jsonb
-);
-
-create index if not exists conversations_user_ref_idx on conversations (user_ref);
-create index if not exists conversations_started_at_idx on conversations (started_at desc);
-
--- ============================================================================
--- messages
--- One row per turn. `refusal_reason` is populated when the safety gate stops
--- generation; it's queryable so the correct-abstention metric can be computed
--- without re-reading the model output.
--- ============================================================================
-create table if not exists messages (
-  id                uuid primary key default gen_random_uuid(),
-  conversation_id   uuid not null references conversations (id) on delete cascade,
-  role              text not null check (role in ('user', 'assistant', 'system', 'tool')),
-  content           text not null,
-  refusal_reason    text,                          -- non-null iff the assistant refused; enum-shaped: 'clinical', 'welfare', 'out-of-scope', 'safety'
-  citations         jsonb not null default '[]'::jsonb, -- array of {chunkId, documentId, span}
-  tool_calls        jsonb not null default '[]'::jsonb, -- array of {name, args, result_ref}
-  created_at        timestamptz not null default now()
-);
-
-create index if not exists messages_conversation_id_idx on messages (conversation_id, created_at);
-create index if not exists messages_refusal_reason_idx on messages (refusal_reason) where refusal_reason is not null;
-
--- ============================================================================
--- traces
--- One row per pipeline span (safety-gate, router, retrieval, rerank,
--- synthesis, tool-call, refusal). Structured for the eval harness and for
--- shop-staff conversation review.
--- ============================================================================
-create table if not exists traces (
-  id                uuid primary key default gen_random_uuid(),
-  trace_id          uuid not null,                 -- correlates spans across a single request
-  span_id           uuid not null,
-  parent_span_id    uuid,                          -- forms the span tree within a trace
-  conversation_id   uuid references conversations (id) on delete cascade,
-  message_id        uuid references messages (id) on delete set null,
-  span_kind         text not null check (
-    span_kind in ('safety-gate','router','retrieval','rerank','synthesis','tool-call','refusal')
-  ),
-  started_at        timestamptz not null,
-  duration_ms       integer not null,
-  attributes        jsonb not null default '{}'::jsonb, -- span-kind-specific fields (e.g. topK for retrieval)
-  error             text,
-  created_at        timestamptz not null default now(),
-  constraint traces_span_id_unique unique (span_id)
-);
-
-create index if not exists traces_trace_id_idx on traces (trace_id, started_at);
-create index if not exists traces_conversation_id_idx on traces (conversation_id, started_at);
-create index if not exists traces_span_kind_idx on traces (span_kind, started_at desc);
 
 -- ============================================================================
 -- updated_at trigger for products

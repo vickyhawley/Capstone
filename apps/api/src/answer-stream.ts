@@ -36,6 +36,7 @@ import {
 
 interface AnswerRequestBody {
   readonly query?: unknown;
+  readonly conversation_id?: unknown;
 }
 
 /**
@@ -58,10 +59,39 @@ export function createAnswerStreamRoute(deps: AnswerDeps): Hono {
     if (typeof body.query !== 'string' || body.query.trim() === '') {
       return c.json({ error: '`query` is required and must be a non-empty string' }, 400);
     }
-    const query: RouterQuery = { text: body.query };
+    const originalQueryText = body.query;
+    const clientConvId = typeof body.conversation_id === 'string' ? body.conversation_id : null;
 
     return streamSSE(c, async (stream) => {
+      let conversationId: string | null = null;
+      let originalUserText = originalQueryText;
+      let finalAssistantText = '';
       try {
+        // GW-16: load-or-create conversation, then rewrite the
+        // ambiguous follow-up (if any) before the router sees it.
+        // Same semantics as the JSON route — see answer.ts for
+        // full rationale.
+        let history: readonly import('@groundwork/core').ConversationTurn[] = [];
+        if (deps.conversationStore) {
+          if (clientConvId) {
+            const existing = await deps.conversationStore.get(clientConvId);
+            if (existing) {
+              conversationId = existing.id;
+              history = existing.history;
+            }
+          }
+          if (!conversationId) {
+            const fresh = await deps.conversationStore.create();
+            conversationId = fresh.id;
+          }
+        }
+        const routerQueryText =
+          history.length > 0 && deps.contextRewriter
+            ? await deps.contextRewriter(originalQueryText, history)
+            : originalQueryText;
+        const rewritten = routerQueryText !== originalQueryText ? routerQueryText : null;
+        const query: RouterQuery = { text: routerQueryText };
+
         const decision = await deps.router.route(query);
         const behaviour = deps.safetyGate.decide(decision, query);
         const behaviourCopy = renderBehaviour(behaviour);
@@ -77,6 +107,7 @@ export function createAnswerStreamRoute(deps: AnswerDeps): Hono {
               data: JSON.stringify({ text: behaviourCopy }),
             });
           }
+          finalAssistantText = behaviourCopy ?? '';
           await stream.writeSSE({
             event: 'done',
             data: JSON.stringify({
@@ -93,9 +124,13 @@ export function createAnswerStreamRoute(deps: AnswerDeps): Hono {
               substitute_handles: [],
               delivery_zone_status: null,
               product_links: [],
+              conversation_id: conversationId,
+              rewritten_query: rewritten,
               degraded_reason: null,
             }),
           });
+          // Fall through to the finally block so the turn is
+          // still persisted to the conversation history.
           return;
         }
 
@@ -157,18 +192,22 @@ export function createAnswerStreamRoute(deps: AnswerDeps): Hono {
         );
 
         // Synthesizer stream — yield deltas as they arrive.
+        const answerParts: string[] = [];
         for await (const delta of deps.synthesizer.synthesizeStream({
           query,
           routerDecision: decision,
           toolResults: loopResult.toolInvocations,
+          history,
         })) {
           if (delta.text.length > 0) {
             await stream.writeSSE({
               event: 'answer-delta',
               data: JSON.stringify({ text: delta.text }),
             });
+            answerParts.push(delta.text);
           }
         }
+        finalAssistantText = answerParts.join('');
 
         // Final metadata event. Same fields as the JSON route's
         // response body — clients built for one work for the other.
@@ -190,6 +229,8 @@ export function createAnswerStreamRoute(deps: AnswerDeps): Hono {
             substitute_handles: substituteHandles,
             delivery_zone_status: deliveryZoneStatus,
             product_links: productLinks,
+            conversation_id: conversationId,
+            rewritten_query: rewritten,
             degraded_reason: null,
           }),
         });
@@ -209,6 +250,7 @@ export function createAnswerStreamRoute(deps: AnswerDeps): Hono {
             data: JSON.stringify({ text: copy }),
           });
         }
+        finalAssistantText = copy;
         await stream.writeSSE({
           event: 'done',
           data: JSON.stringify({
@@ -224,14 +266,44 @@ export function createAnswerStreamRoute(deps: AnswerDeps): Hono {
             substitute_handles: [],
             delivery_zone_status: null,
             product_links: [],
+            conversation_id: conversationId,
+            rewritten_query: null,
             degraded_reason: message,
           }),
         });
+      } finally {
+        // GW-16: persist both turns regardless of which path we took
+        // (answer, safety refusal, or graceful escalate). Best-effort;
+        // a store failure logs and continues rather than breaking a
+        // successful stream. Turn IDs are generated locally.
+        if (deps.conversationStore && conversationId && finalAssistantText) {
+          try {
+            const now = new Date().toISOString();
+            await deps.conversationStore.appendTurn(conversationId, {
+              turnId: newTurnId(),
+              role: 'user',
+              text: originalUserText,
+              createdAt: now,
+            });
+            await deps.conversationStore.appendTurn(conversationId, {
+              turnId: newTurnId(),
+              role: 'assistant',
+              text: finalAssistantText,
+              createdAt: now,
+            });
+          } catch (err) {
+            console.warn('conversation-append (stream): persistence failed', err);
+          }
+        }
       }
     });
   });
 
   return route;
+}
+
+function newTurnId(): string {
+  return Math.random().toString(36).slice(2, 14);
 }
 
 function escalationTargetOf(b: Behaviour): string | null {

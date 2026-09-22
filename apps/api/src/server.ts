@@ -144,6 +144,46 @@ const lazyAnswerDeps = {
       }
     },
   },
+  // GW-16: the JSON route + stream route both read these off the deps
+  // object; missing them here means the conversation-memory pipeline
+  // silently no-ops (both are optional in AnswerDeps). Bug found in
+  // prod when turn 2 didn't resolve "anything else similar" against
+  // turn 1's hemp-bedding answer — response carried
+  // `conversation_id: null` because deps.conversationStore was
+  // undefined. Proxies added below to match the pattern of the other
+  // deps: forward to the resolved defaultAnswerDeps().
+  conversationStore: {
+    async create() {
+      const store = (await getAnswerDeps()).conversationStore;
+      if (!store) throw new Error('conversationStore not configured');
+      return store.create();
+    },
+    async get(id: string) {
+      const store = (await getAnswerDeps()).conversationStore;
+      if (!store) throw new Error('conversationStore not configured');
+      return store.get(id);
+    },
+    async appendTurn(
+      id: string,
+      turn: Parameters<
+        NonNullable<Awaited<ReturnType<typeof defaultAnswerDeps>>['conversationStore']>['appendTurn']
+      >[1],
+    ) {
+      const store = (await getAnswerDeps()).conversationStore;
+      if (!store) throw new Error('conversationStore not configured');
+      return store.appendTurn(id, turn);
+    },
+  },
+  contextRewriter: async (
+    query: string,
+    history: Parameters<
+      NonNullable<Awaited<ReturnType<typeof defaultAnswerDeps>>['contextRewriter']>
+    >[1],
+  ) => {
+    const rewriter = (await getAnswerDeps()).contextRewriter;
+    if (!rewriter) return query;
+    return rewriter(query, history);
+  },
 };
 
 app.route('/api/answer', createAnswerRoute(lazyAnswerDeps));

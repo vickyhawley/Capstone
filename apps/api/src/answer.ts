@@ -38,14 +38,18 @@ import {
   RouteBasedPlanner,
   RulesSafetyGate,
   ShopInfoTool,
+  SupabaseConversationStore,
   SupabaseTraceSink,
   loadDeliveryDistricts,
   loadShopInfo,
   loadStatusOverrideList,
+  rewriteWithContext,
   rrf,
 } from '@groundwork/adapters';
 import type {
   Behaviour,
+  ConversationStore,
+  ConversationTurn,
   Planner,
   Router,
   SafetyGate,
@@ -124,6 +128,18 @@ interface AnswerResponseBody {
    *  result. URLs built from NFCS_STOREFRONT_BASE_URL + Shopify's
    *  /products/{handle} pattern. */
   readonly product_links: readonly ProductLink[];
+  /** GW-16: server-issued conversation id. Present on every response
+   *  (turn 1 mints it, subsequent turns echo the client's). Client
+   *  quotes this on the next request to continue the conversation.
+   *  Null only on degraded-escalate turns that failed before the
+   *  conversation could be created (rare). */
+  readonly conversation_id: string | null;
+  /** GW-16: the query the router actually saw, after context-aware
+   *  rewriting. Equal to the input query for turn 1 or when the
+   *  rewriter chose to pass it through unchanged. Surfaced for
+   *  legibility in the evidence panel and to make eval diffs
+   *  reproducible when a rewrite changed behaviour. */
+  readonly rewritten_query: string | null;
   /** GW-23: populated when the request completed via the infra-
    *  failure graceful-escalate path. Null on all normal responses.
    *  Machine-readable free string; harness metrics can key on
@@ -149,6 +165,18 @@ export interface AnswerDeps {
    *  Escalate / abstain / degraded turns bypass this — their
    *  copy is set by the safety gate + graceful-escalate paths. */
   readonly synthesizer: Synthesizer;
+  /** GW-16: persists multi-turn conversation history so ambiguous
+   *  follow-ups can be resolved against prior turns. See ADR-0017.
+   *  Optional in the interface so pre-GW-16 tests can keep passing
+   *  a slimmer deps object; when null, the handler skips both the
+   *  rewrite step and the append step, and every request is treated
+   *  as turn 1 with a fresh id. */
+  readonly conversationStore?: ConversationStore;
+  /** GW-16: rewrites the current query using the last N turns so
+   *  the descriptive router (ADR-0010) doesn't need to grow
+   *  context awareness. Called only when history is non-empty.
+   *  Optional for the same reason as conversationStore. */
+  readonly contextRewriter?: (query: string, history: readonly ConversationTurn[]) => Promise<string>;
 }
 
 /**
@@ -170,7 +198,7 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
       return c.json({ error: '`query` is required and must be a non-empty string' }, 400);
     }
 
-    const query = { text: body.query };
+    const originalQueryText = body.query;
 
     // GW-23: any infra exception (router, tool loop) below converts
     // to the graceful-escalate response, not a 500. Per-dependency
@@ -180,7 +208,27 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
     // shape either way — the safety gate's `escalate` behaviour
     // with `staff-order` is reused rather than inventing a new
     // "degraded" enum value, matching existing escalation copy.
+    let conversationId: string | null = null;
     try {
+      // GW-16: load-or-create conversation. Client supplies id on
+      // continuations; server mints on turn 1. A stale id (client
+      // reload after retention) is treated as turn 1, not an error.
+      const clientConvId = typeof body.conversation_id === 'string' ? body.conversation_id : null;
+      const conversation = await loadOrCreateConversation(deps.conversationStore, clientConvId);
+      conversationId = conversation?.id ?? null;
+      const history = conversation?.history ?? [];
+
+      // GW-16: context-aware query rewrite. Runs only when history
+      // exists (turn 2+). Passes through unchanged when the query
+      // already stands alone (per rewriter's own policy). See
+      // ADR-0017 §3.
+      const routerQueryText =
+        history.length > 0 && deps.contextRewriter
+          ? await deps.contextRewriter(originalQueryText, history)
+          : originalQueryText;
+      const rewritten = routerQueryText !== originalQueryText ? routerQueryText : null;
+      const query = { text: routerQueryText };
+
       const decision = await deps.router.route(query);
       const behaviour = deps.safetyGate.decide(decision, query);
       const behaviourCopy = renderBehaviour(behaviour);
@@ -242,8 +290,25 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
           query,
           routerDecision: decision,
           toolResults: loopResult.toolInvocations,
+          history,
         });
         synthesizedAnswer = synth.answer;
+      }
+
+      const finalAnswer = behaviourCopy ?? synthesizedAnswer ?? '';
+
+      // GW-16: append both sides of the exchange after we know the
+      // final answer. Best-effort — an append failure logs and
+      // continues rather than degrading the customer response. The
+      // conversation id in the response still refers to the created
+      // conversation; the client can retry on the next turn.
+      if (deps.conversationStore && conversationId) {
+        await appendTurnPair(
+          deps.conversationStore,
+          conversationId,
+          originalQueryText,
+          finalAnswer,
+        );
       }
 
       const response: AnswerResponseBody = {
@@ -253,7 +318,7 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
         // guaranteed non-null for non-answer behaviours by the copy
         // renderer, and synthesizedAnswer is guaranteed non-null for
         // answer-behaviour turns by the adapter's own fallback.
-        answer: behaviourCopy ?? synthesizedAnswer ?? '',
+        answer: finalAnswer,
         citations: [],
         retrieved_chunk_ids: [],
         refusal_reason: behaviour.kind === 'abstain' ? behaviour.refusalReason : null,
@@ -268,10 +333,12 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
         substitute_handles: substituteHandles,
         delivery_zone_status: deliveryZoneStatus,
         product_links: productLinks,
+        conversation_id: conversationId,
+        rewritten_query: rewritten,
       };
       return c.json(response);
     } catch (error) {
-      const degraded = renderDegradedEscalate(error);
+      const degraded = renderDegradedEscalate(error, conversationId);
       return c.json(degraded);
     }
   });
@@ -290,7 +357,10 @@ export function createAnswerRoute(deps: AnswerDeps): Hono {
  * rather than fabricating a classification the router never
  * returned.
  */
-function renderDegradedEscalate(error: unknown): AnswerResponseBody {
+function renderDegradedEscalate(
+  error: unknown,
+  conversationId: string | null = null,
+): AnswerResponseBody {
   const message = error instanceof Error ? error.message : String(error);
   const escalate: Behaviour = { kind: 'escalate', escalationTarget: 'staff-order' };
   const copy = renderBehaviour(escalate) ?? '';
@@ -313,8 +383,67 @@ function renderDegradedEscalate(error: unknown): AnswerResponseBody {
     substitute_handles: [],
     delivery_zone_status: null,
     product_links: [],
+    conversation_id: conversationId,
+    rewritten_query: null,
     degraded_reason: message,
   };
+}
+
+/**
+ * GW-16 helper. Loads the conversation named by the client's id, or
+ * creates a fresh one when the id is missing or unknown. Never throws
+ * on a stale id — treats it as turn 1. Returns null only when no
+ * conversation store is wired (pre-GW-16 tests + local dev without
+ * SUPABASE creds).
+ */
+async function loadOrCreateConversation(
+  store: ConversationStore | undefined,
+  clientId: string | null,
+) {
+  if (!store) return null;
+  if (clientId) {
+    const existing = await store.get(clientId);
+    if (existing) return existing;
+    // Fall through — mint a new one. Ignoring the stale id rather
+    // than surfacing it is the port contract's documented behaviour.
+  }
+  return store.create();
+}
+
+/**
+ * GW-16 helper. Appends the user + assistant turn pair after the
+ * pipeline has produced a final answer. Best-effort — a persistence
+ * failure logs and continues rather than degrading the customer
+ * response. TurnIds are trace-id-shaped 12-char randoms; scoping
+ * to the conversation avoids the trace-id-uniqueness concern.
+ */
+async function appendTurnPair(
+  store: ConversationStore,
+  conversationId: string,
+  userText: string,
+  assistantText: string,
+): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+    await store.appendTurn(conversationId, {
+      turnId: newTurnId(),
+      role: 'user',
+      text: userText,
+      createdAt: now,
+    });
+    await store.appendTurn(conversationId, {
+      turnId: newTurnId(),
+      role: 'assistant',
+      text: assistantText,
+      createdAt: now,
+    });
+  } catch (err) {
+    console.warn('conversation-append: persistence failed, response unaffected', err);
+  }
+}
+
+function newTurnId(): string {
+  return Math.random().toString(36).slice(2, 14);
 }
 
 function escalationTargetOf(b: Behaviour): string | null {
@@ -449,5 +578,16 @@ export async function defaultAnswerDeps(): Promise<AnswerDeps> {
     // breaker so cascading LLM failures open the circuit and route
     // to graceful-escalate at the request boundary (GW-23).
     synthesizer: new OpenAiSynthesizer(openai, openaiBreaker),
+    // GW-16: server-side conversation memory (ADR-0017). Same
+    // Supabase client as the trace sink; a separate table
+    // (migration 005) so cascade delete of a conversation does
+    // not lose trace evidence.
+    conversationStore: new SupabaseConversationStore(supabase),
+    // GW-16: context-aware query rewrite. Wraps the shared openai
+    // client with the openaiBreaker so a cascading LLM failure
+    // opens the same breaker as router + synthesizer, keeping
+    // one degradation surface rather than three.
+    contextRewriter: (query, history) =>
+      rewriteWithContext(query, history, { openai, openaiBreaker }),
   };
 }

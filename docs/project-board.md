@@ -83,7 +83,7 @@ disclosure.
 | GW-14 | Red-team tier-3 wiring — eight adversarial scenarios | Done | sprint-log §"GW-14 close-out" |
 | GW-15 | Article 50 disclosure surface + capability profile | Done | sprint-log §"GW-15 close-out"; ADR-0012; `/api/about` |
 | GW-17 | Tag audit + shape-tag retrofit on early cases | Done — partial | sprint-log §"GW-17 close-out — partial" |
-| GW-16 | Conversation memory (multi-turn) | Roadmap | Deferred Sprint 2 → 3 → 4 → post-capstone; needs multi-turn golden dataset |
+| GW-16 | Conversation memory (multi-turn) | Done — partial | sprint-log §"GW-16 conversation memory"; ADR-0017. Memory infra + context rewrite shipped Sprint 4; multi-turn golden dataset still deferred (post-capstone) |
 
 **Also landed in Sprint 2 (out of the numbered stories):** sparse
 retrieval fix + hybrid rematch (documented as "Sparse fix + hybrid
@@ -187,8 +187,7 @@ carries the full rationale for each item; summaries below.
 
 | Item | One-line reason for deferral |
 |---|---|
-| GW-16 conversation memory | Deferred Sprint 2 → 3 → 4; needs multi-turn golden dataset |
-| Multi-turn eval dataset | Companion to GW-16; different case-file shape |
+| Multi-turn eval dataset | GW-16 infra shipped Sprint 4 (ADR-0017); golden dataset still needed to measure the rewrite path — different case-file shape (conversation state, follow-up handling) than the existing single-turn set |
 
 ### Ingestion and operations
 

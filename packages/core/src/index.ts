@@ -48,6 +48,12 @@ export {
 } from './tool-loop.js';
 export type { TraceSink, Span, SpanKind, SpanAttributeValue } from './ports/trace-sink.js';
 export type {
+  Conversation,
+  ConversationRole,
+  ConversationStore,
+  ConversationTurn,
+} from './ports/conversation-store.js';
+export type {
   Synthesizer,
   SynthesizerDelta,
   SynthesizerInput,

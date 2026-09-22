@@ -55,6 +55,13 @@ export interface AnswerResponse {
   readonly substitute_handles: readonly string[];
   readonly delivery_zone_status: DeliveryZoneStatus | null;
   readonly product_links: readonly ProductLink[];
+  /** GW-16: server-issued conversation id. Present on every response;
+   *  client stores it after turn 1 and quotes it on subsequent turns. */
+  readonly conversation_id: string | null;
+  /** GW-16: the query the router actually saw, after context-aware
+   *  rewriting. Non-null only when the rewriter changed the text
+   *  (turn 2+ ambiguous follow-ups). */
+  readonly rewritten_query: string | null;
   readonly degraded_reason?: string | null;
 }
 

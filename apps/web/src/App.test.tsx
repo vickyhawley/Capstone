@@ -43,6 +43,8 @@ const CANNED_ANSWER: AnswerResponse = {
       priceMax: 22.5,
     },
   ],
+  conversation_id: 'test-conv-001',
+  rewritten_query: null,
 };
 
 /**

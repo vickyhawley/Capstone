@@ -4297,8 +4297,101 @@ regularly, we can set up a recurring delivery on whatever
 schedule suits you." No hard sell, no fabrication, no UX
 noise on non-eligible categories.
 
+### GW-16 conversation memory — server-side history + context rewrite (2026-09-22)
 
+Sprint 4 close-out story. The Sprint-2 and Sprint-3 deferrals
+of GW-16 both named "needs multi-turn eval dataset" as the
+blocker; this ships the memory infrastructure end-to-end
+without waiting for the dataset. The dataset is recorded
+explicitly as a post-capstone follow-up on the project board.
 
+**What landed:**
+
+- **Migration 005 (`supabase/migrations/005_conversations_table.sql`)**
+  — one row per conversation; whole history lives in a JSONB
+  column keyed on the row's UUID. Same "single-row shape"
+  precedent as the traces table (ADR-0015). RLS enabled with
+  no policies; service-role only, matching the treat-as-PII
+  posture (ADR-0017 §5). **Includes legacy cleanup:** drops the
+  never-populated `conversations` + `messages` tables that
+  earlier revisions of migration 001 defined for a plan that
+  got superseded. `select count(*) from conversations`
+  returned 0 before the drop was authored (this project is
+  pre-launch). Migration 001 was updated in the same commit
+  to remove those two definitions plus the 001-shape `traces`
+  block that migration 004 already supersedes.
+- **`ConversationStore` port + two adapters.**
+  `packages/core/src/ports/conversation-store.ts` defines the
+  three-method surface (`create`, `get`, `appendTurn`).
+  `SupabaseConversationStore` writes to the new table;
+  `StubConversationStore` is the in-memory equivalent tests
+  and local dev use.
+- **`rewriteWithContext` (context rewriter).**
+  `packages/adapters/src/router/context-rewriter.ts` — one
+  `gpt-4o-mini` call that rewrites an ambiguous follow-up
+  ("do you have anything else similar") into a self-contained
+  query using the last four turns. Runs BEFORE the router so
+  the ADR-0010 6-class classifier stays context-free. Failure
+  degrades to the original query (ADR-0017 §5).
+- **`/api/answer` wiring.** Turn 1 mints a `conversation_id`;
+  turn 2+ echoes the client's. When history exists, rewriter
+  runs; the router sees the rewrite. Both sides of the
+  exchange (verbatim user text + final assistant answer) get
+  appended after the response is composed — persistence
+  failures log and continue rather than degrading the
+  customer response.
+- **Chat.tsx.** Threads the id through `streamAnswer`,
+  captures the server's id off the response, quotes it on the
+  next request, and shows a "New conversation" reset button
+  above the message history when a conversation is active.
+- **ADR-0017 authored** — records the four load-bearing
+  decisions (single-row JSONB, server-minted ids, rewrite
+  upstream of router, degrade-to-original) and names the
+  deferred dataset as an honest gap.
+- **Multi-turn integration test** in `apps/api/src/answer.test.ts`
+  — four cases: turn 1 mints an id and skips the rewriter;
+  turn 2 runs the rewriter on prior history and routes on
+  the rewrite while the store keeps the customer's ORIGINAL
+  words; stale ids start a fresh conversation (not an error);
+  pre-GW-16 deps (no store) still work with `conversation_id:
+  null`.
+
+**Honest gaps to name:**
+
+- **Multi-turn eval dataset is still deferred.** The dataset
+  is single-turn today; no golden set exercises the rewrite
+  path. Post-capstone follow-up on the project board.
+- **Rewrite failure is silent to the customer.** The rewriter
+  degrades to the original query on any error — good for
+  customer-facing behaviour, but the router's classification
+  may then be wrong on the ambiguous follow-up. Observability
+  hook (`rewritten_query` field on the response) is in place
+  so evals will surface it once the dataset lands.
+- **Composition-root gap caught by manual test, not automated
+  tests.** After migration 005 landed, first live turn came
+  back with `conversation_id: null` and turn 2 got
+  abstain-out-of-scope on "do you have anything else similar"
+  because the rewriter never fired. Root cause:
+  `apps/api/src/server.ts` builds a `lazyAnswerDeps` object
+  manually to proxy each dep with a `getAnswerDeps()` lookup;
+  when `defaultAnswerDeps()` was extended with `conversationStore`
+  + `contextRewriter`, no proxies were added here. Both are
+  optional in the `AnswerDeps` interface (for pre-GW-16 test
+  back-compat), so TypeScript accepted the incomplete deps
+  object silently. `answer.test.ts` builds its own deps and
+  can't catch this — the gap is at the composition-root
+  boundary, exactly the class of thing the "diff, don't just
+  test" rule exists for. Fixed by adding both proxies with the
+  same pattern as the other deps. Follow-up watchlist: if
+  another optional dep gets added to `defaultAnswerDeps()`,
+  it needs a matching proxy shim in `server.ts`.
+
+**Tests:** all 422 workspace tests pass (55 in `apps/api`,
+including the four new multi-turn integration cases; 233 in
+`packages/adapters` including `StubConversationStore` +
+`SupabaseConversationStore` + `context-rewriter` coverage;
+77 in `packages/core`, 53 in `packages/ingestion`, 4 in
+`apps/web`).
 
 
 

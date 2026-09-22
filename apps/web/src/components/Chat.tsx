@@ -38,15 +38,22 @@ const EXAMPLE_CATEGORIES: readonly {
 ];
 
 /**
- * Multi-turn chat area. History lives in component state; the API
- * is stateless (each POST /api/answer carries only the current
- * query). GW-16 conversation memory would move this state up into
- * a shared store and thread a conversation_id through the request.
+ * Multi-turn chat area. Local component state renders the history;
+ * the API layer (GW-16, ADR-0017) owns the authoritative conversation
+ * store — the client mirrors it for UI purposes and quotes the
+ * server-issued `conversation_id` on each subsequent request.
  */
 export function Chat() {
   const [messages, setMessages] = useState<readonly Message[]>([]);
   const [pending, setPending] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const scrollAnchor = useRef<HTMLDivElement>(null);
+
+  function handleNewConversation(): void {
+    if (pending) return;
+    setMessages([]);
+    setConversationId(null);
+  }
 
   // Auto-scroll to the newest message. Runs on messages length change
   // rather than every render so it doesn't fight with the user's own
@@ -84,6 +91,8 @@ export function Chat() {
       substitute_handles: [],
       delivery_zone_status: null,
       product_links: [],
+      conversation_id: null,
+      rewritten_query: null,
     };
     setMessages((prev) => [...prev, { kind: 'bot', id: botId, response: placeholder }]);
 
@@ -110,37 +119,47 @@ export function Chat() {
     };
 
     try {
-      await streamAnswer(trimmed, {
-        onToolStart: ({ name }) => {
-          steps.push({ name, done: false });
-          patchBot({ steps: [...steps] });
-        },
-        onToolComplete: ({ name, ok }) => {
-          // Match by name — no request-id yet, tools don't fire
-          // twice in one turn. Update the LAST matching step.
-          for (let i = steps.length - 1; i >= 0; i -= 1) {
-            const step = steps[i];
-            if (step && step.name === name && !step.done) {
-              steps[i] = { name, done: true, ok };
-              break;
+      await streamAnswer(
+        trimmed,
+        {
+          onToolStart: ({ name }) => {
+            steps.push({ name, done: false });
+            patchBot({ steps: [...steps] });
+          },
+          onToolComplete: ({ name, ok }) => {
+            // Match by name — no request-id yet, tools don't fire
+            // twice in one turn. Update the LAST matching step.
+            for (let i = steps.length - 1; i >= 0; i -= 1) {
+              const step = steps[i];
+              if (step && step.name === name && !step.done) {
+                steps[i] = { name, done: true, ok };
+                break;
+              }
             }
-          }
-          patchBot({ steps: [...steps] });
+            patchBot({ steps: [...steps] });
+          },
+          onAnswerDelta: ({ text: delta }) => {
+            accumulated += delta;
+            patchBot({ response: { answer: accumulated } });
+          },
+          onDone: (metadata) => {
+            // Replace the response with the final metadata + the
+            // accumulated answer text. Steps get cleared — the
+            // evidence panel takes over via tool_calls.
+            patchBot({
+              response: { ...metadata, answer: accumulated },
+              steps: [],
+            });
+            // GW-16: capture the server-issued conversation id.
+            // Turn 1 mints; turn 2+ echoes what we sent. Stored
+            // in state so the next handleSubmit quotes it.
+            if (metadata.conversation_id) {
+              setConversationId(metadata.conversation_id);
+            }
+          },
         },
-        onAnswerDelta: ({ text: delta }) => {
-          accumulated += delta;
-          patchBot({ response: { answer: accumulated } });
-        },
-        onDone: (metadata) => {
-          // Replace the response with the final metadata + the
-          // accumulated answer text. Steps get cleared — the
-          // evidence panel takes over via tool_calls.
-          patchBot({
-            response: { ...metadata, answer: accumulated },
-            steps: [],
-          });
-        },
-      });
+        { conversationId },
+      );
     } catch (err: unknown) {
       // Network / non-2xx from the stream endpoint. Replace the
       // placeholder with an error bubble so the customer isn't
@@ -174,6 +193,19 @@ export function Chat() {
 
   return (
     <div className={styles.chat}>
+      {messages.length > 0 ? (
+        <div className={styles.conversationBar}>
+          <button
+            type="button"
+            className={styles.newConversationButton}
+            onClick={handleNewConversation}
+            disabled={pending}
+            aria-label="Start a new conversation"
+          >
+            New conversation
+          </button>
+        </div>
+      ) : null}
       <div className={styles.history} aria-live="polite" aria-label="Conversation">
         {messages.length === 0 ? (
           <div className={styles.emptyState}>
