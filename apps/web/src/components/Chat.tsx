@@ -202,9 +202,13 @@ export function Chat({ initialMessages = [] }: ChatProps = {}) {
     void handleSubmit(query);
   }
 
+  // Seed messages (the embed's disclosure) aren't a conversation yet:
+  // keep the starter pills visible until the customer sends something.
+  const hasConversation = messages.length > initialMessages.length;
+
   return (
     <div className={styles.chat}>
-      {messages.length > 0 ? (
+      {hasConversation ? (
         <div className={styles.conversationBar}>
           <button
             type="button"
@@ -218,7 +222,10 @@ export function Chat({ initialMessages = [] }: ChatProps = {}) {
         </div>
       ) : null}
       <div className={styles.history} aria-live="polite" aria-label="Conversation">
-        {messages.length === 0 ? (
+        {messages.map((m) => (
+          <MessageBubble key={m.id} message={m} onRetry={handleRetry} />
+        ))}
+        {hasConversation ? null : (
           <div className={styles.emptyState}>
             <p className={styles.emptyHeadline}>What can I help you find?</p>
             <p className={styles.emptySub}>
@@ -244,10 +251,6 @@ export function Chat({ initialMessages = [] }: ChatProps = {}) {
               ))}
             </div>
           </div>
-        ) : (
-          messages.map((m) => (
-            <MessageBubble key={m.id} message={m} onRetry={handleRetry} />
-          ))
         )}
         {/* Standalone pending spinner removed — the streaming bot
          * bubble is the loading indicator now. First delta typically
