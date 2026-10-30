@@ -39,6 +39,18 @@ body {
   min-height: 320px;
 }
 
+/* Laptop+ (full-width page embed): at least 100px side gutters, and
+ * on very wide screens cap the chat at 64rem so lines stay readable.
+ * Block padding gives breathing room from the store header/footer and
+ * stops the window's gold shadow being clipped by the iframe edge.
+ * The 400px widget panel never hits this breakpoint. */
+@media (min-width: 1024px) {
+  .embed-shell {
+    padding-block: 2rem;
+    padding-inline: max(100px, calc((100% - 64rem) / 2));
+  }
+}
+
 .embed-shell > :last-child {
   flex: 1 1 auto;
   min-height: 0;
