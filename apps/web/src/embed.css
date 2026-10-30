@@ -1,0 +1,51 @@
+/**
+ * Styles for the chrome-less embed surface. Loaded only by
+ * embed.tsx — kept separate from index.css so the main app's site
+ * chrome styles don't ride into the Shopify iframe.
+ *
+ * Responsive from 320px wide up to the 400x600 panel the Shopify
+ * snippet opens. Touch targets ≥ 44px per iOS HIG.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+  color: #1a2340;
+  background: #ffffff;
+}
+
+.embed-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 320px;
+}
+
+.embed-shell > :last-child {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.embed-loading,
+.embed-error {
+  padding: 16px;
+  color: #4a5578;
+}
+
+.embed-error strong {
+  color: #a0323c;
+}

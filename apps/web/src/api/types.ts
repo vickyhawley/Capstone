@@ -87,4 +87,10 @@ export interface AboutResponse {
       readonly describes: string;
     }[];
   };
+  readonly escalation?: {
+    readonly phone: string;
+    readonly email: string;
+    readonly opening_hours: string;
+  };
+  readonly degraded_fallback?: string;
 }

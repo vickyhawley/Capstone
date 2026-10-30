@@ -19,6 +19,7 @@ export type {
 export { ABSTAIN_COPY, ESCALATION_COPY, renderBehaviour } from './copy/behaviour-copy.js';
 export { ARTICLE_50_DISCLOSURE } from './compliance/disclosure.js';
 export { CAPABILITY_PROFILE, type CapabilityProfile } from './compliance/capability-profile.js';
+export { STAFF_CONTACT, DEGRADED_FALLBACK, type StaffContact } from './compliance/staff-contact.js';
 export type {
   LanguageModel,
   CompletionRequest,

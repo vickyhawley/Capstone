@@ -37,21 +37,32 @@ const EXAMPLE_CATEGORIES: readonly {
   },
 ];
 
+export interface ChatProps {
+  /** Pre-seeded messages. The embed surface uses this to prepend a
+   *  bot bubble carrying the Article 50 disclosure so the AI
+   *  disclosure is the first thing in the conversation (not just a
+   *  side-panel detail). Default: no seed. */
+  readonly initialMessages?: readonly Message[];
+}
+
 /**
  * Multi-turn chat area. Local component state renders the history;
  * the API layer (GW-16, ADR-0017) owns the authoritative conversation
  * store — the client mirrors it for UI purposes and quotes the
  * server-issued `conversation_id` on each subsequent request.
  */
-export function Chat() {
-  const [messages, setMessages] = useState<readonly Message[]>([]);
+export function Chat({ initialMessages = [] }: ChatProps = {}) {
+  const [messages, setMessages] = useState<readonly Message[]>(initialMessages);
   const [pending, setPending] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const scrollAnchor = useRef<HTMLDivElement>(null);
 
   function handleNewConversation(): void {
     if (pending) return;
-    setMessages([]);
+    // Reset to the seed, not []: on the embed surface the seed is
+    // the Article 50 disclosure, and "New conversation" shouldn't
+    // make the compliance preamble vanish.
+    setMessages(initialMessages);
     setConversationId(null);
   }
 

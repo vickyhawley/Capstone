@@ -51,4 +51,21 @@ describe('GET /api/about', () => {
     };
     expect(body.capability_profile.can_do).toEqual(CAPABILITY_PROFILE.canDo);
   });
+
+  it('returns escalation details for the embed widget', async () => {
+    const res = await get(createAboutRoute());
+    const body = (await res.json()) as {
+      escalation: { phone: string; email: string; opening_hours: string };
+    };
+    expect(typeof body.escalation.phone).toBe('string');
+    expect(typeof body.escalation.email).toBe('string');
+    expect(typeof body.escalation.opening_hours).toBe('string');
+  });
+
+  it('returns the degraded_fallback copy for the embed widget', async () => {
+    const res = await get(createAboutRoute());
+    const body = (await res.json()) as { degraded_fallback: string };
+    expect(body.degraded_fallback).toContain('NFCS');
+    // Non-clinical framing is enforced by core/compliance/staff-contact.test.ts.
+  });
 });

@@ -1,0 +1,185 @@
+{%- comment -%}
+  NFCS chat widget — Groundwork embed snippet.
+
+  WHAT THIS IS
+  ------------
+  A floating button at bottom-right that opens a 400×600 panel
+  containing an iframe to the Groundwork /embed surface. The iframe
+  isolates Groundwork's React/CSS from the Shopify theme so neither
+  side can regress the other.
+
+  WHERE THIS GOES
+  ---------------
+  Save this file as a snippet in the live theme:
+    1. Online Store → Themes → Actions → Duplicate (do not edit live).
+    2. In the duplicate: Actions → Edit code → Snippets →
+       Add a new snippet named `nfcs-chat`. Paste the body below
+       (everything beneath the ======== line) into it.
+    3. Open layout/theme.liquid and immediately before </body> add:
+         {% render 'nfcs-chat' %}
+    4. Preview the duplicate theme — mobile first, desktop second.
+    5. Only after both pass QA: publish the duplicate.
+
+  REQUIRED THEME CSP ADDITIONS
+  ----------------------------
+  Shopify themes carry a strict default Content-Security-Policy. For
+  the iframe to load, the theme CSP must allow:
+
+    frame-src https://capstone-web-ten.vercel.app;
+    connect-src https://capstone-web-ten.vercel.app;
+
+  (Replace the host with the production Groundwork web domain once
+  the custom domain is cut over.) Shopify themes typically set CSP
+  via a liquid header include — grep the theme for
+  `Content-Security-Policy` and add these sources to the existing
+  directives. If no CSP header is set by the theme, nothing is
+  required here; Shopify's platform-level defaults do not restrict
+  frame-src for app embeds.
+
+  Z-INDEX
+  -------
+  Panel + button use z-index 2147483000 — the max-safe-area 32-bit
+  signed integer bound minus a small cushion. Cart drawers,
+  cookie banners, and "back to top" controls all habitually fight
+  for the top layer; if the theme team sees overlap, they reconcile
+  by lowering a competing element rather than raising this one.
+
+  NOT INCLUDED HERE
+  -----------------
+  — No order-data read, no new tracking pixels. The widget is a
+    chat panel that talks only to Groundwork's own API.
+  — No analytics events. If the shop wants to count opens, wire a
+    small `window.NFCSChat.onOpen` hook later.
+{%- endcomment -%}
+
+{%- comment -%} ============================================================= {%- endcomment -%}
+
+<style>
+  .nfcs-chat-fab {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    border: none;
+    background: #1a2340; /* NFCS navy */
+    color: #d4af37;      /* NFCS gold */
+    font-size: 28px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+    z-index: 2147483000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .nfcs-chat-fab:focus-visible {
+    outline: 3px solid #d4af37;
+    outline-offset: 3px;
+  }
+  .nfcs-chat-panel {
+    position: fixed;
+    right: 20px;
+    bottom: 90px;
+    width: 400px;
+    max-width: calc(100vw - 40px);
+    height: 600px;
+    max-height: calc(100vh - 110px);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+    background: #ffffff;
+    z-index: 2147483000;
+    display: none;
+  }
+  .nfcs-chat-panel.is-open {
+    display: block;
+  }
+  .nfcs-chat-panel iframe {
+    width: 100%;
+    height: 100%;
+    border: 0;
+  }
+  @media (max-width: 480px) {
+    .nfcs-chat-panel {
+      right: 10px;
+      bottom: 80px;
+      width: calc(100vw - 20px);
+      height: calc(100vh - 100px);
+    }
+  }
+</style>
+
+<button
+  type="button"
+  class="nfcs-chat-fab"
+  id="nfcs-chat-fab"
+  aria-label="Open NFCS chat assistant"
+  aria-expanded="false"
+  aria-controls="nfcs-chat-panel"
+>
+  💬
+</button>
+
+<div
+  class="nfcs-chat-panel"
+  id="nfcs-chat-panel"
+  role="dialog"
+  aria-modal="false"
+  aria-label="NFCS chat assistant"
+  hidden
+>
+  {%- comment -%}
+    The iframe src is left empty on first render; the button handler
+    sets it on first open. Keeps the chat bundle out of the critical
+    path for shoppers who never engage.
+  {%- endcomment -%}
+  <iframe
+    id="nfcs-chat-iframe"
+    title="NFCS chat assistant"
+    src=""
+    allow=""
+  ></iframe>
+</div>
+
+<script>
+  (function () {
+    var EMBED_URL = 'https://capstone-web-ten.vercel.app/embed';
+    var fab = document.getElementById('nfcs-chat-fab');
+    var panel = document.getElementById('nfcs-chat-panel');
+    var iframe = document.getElementById('nfcs-chat-iframe');
+    var loaded = false;
+
+    function open() {
+      if (!loaded) {
+        iframe.src = EMBED_URL;
+        loaded = true;
+      }
+      panel.classList.add('is-open');
+      panel.removeAttribute('hidden');
+      fab.setAttribute('aria-expanded', 'true');
+      // Focus moves into the iframe for keyboard users. The iframe's
+      // internal content handles its own focus trap once loaded.
+      iframe.focus();
+    }
+
+    function close() {
+      panel.classList.remove('is-open');
+      panel.setAttribute('hidden', '');
+      fab.setAttribute('aria-expanded', 'false');
+      fab.focus();
+    }
+
+    function toggle() {
+      if (panel.classList.contains('is-open')) close();
+      else open();
+    }
+
+    fab.addEventListener('click', toggle);
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && panel.classList.contains('is-open')) {
+        close();
+      }
+    });
+  })();
+</script>

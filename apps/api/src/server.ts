@@ -10,9 +10,16 @@ import {
   createRateLimitMiddleware,
   createRedisRateLimiter,
 } from './rate-limit.js';
+import { createDailySpendCapMiddleware, createRedisDailySpendCap } from './spend-cap.js';
 
 const limiter = createRedisRateLimiter();
 assertLimiterOrFail(limiter);
+
+// Daily USD cap. Null in dev when env isn't set — the rate limiter
+// above is the primary bound. Prod sets DAILY_SPEND_CAP_USD so a
+// runaway loop (prompt-injection, retry storm) stops at a known
+// ceiling instead of the Vercel invoice.
+const spendCap = createRedisDailySpendCap();
 
 // `defaultAnswerDeps` is async since GW-20 (ProductStockLookupTool)
 // loads two YAML files at startup. Cache the promise so concurrent
@@ -28,6 +35,10 @@ export const app = new Hono();
 
 // Rate limit first so a hostile client can't run any handler for free.
 app.use('*', createRateLimitMiddleware(limiter));
+// Daily spend cap sits AFTER the per-IP rate limit (cheap read) and
+// BEFORE the route handlers (expensive LLM calls). Only /api/answer*
+// is gated — health and about ride for free.
+app.use('*', createDailySpendCapMiddleware(spendCap));
 
 app.get('/health', (c) =>
   c.json({

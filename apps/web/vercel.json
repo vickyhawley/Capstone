@@ -8,6 +8,30 @@
     {
       "source": "/api/:path*",
       "destination": "https://groundwork-api.vercel.app/api/:path*"
+    },
+    {
+      "source": "/embed",
+      "destination": "/embed.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/embed",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "frame-ancestors https://newforestcountrystore.co.uk"
+        }
+      ]
+    },
+    {
+      "source": "/embed.html",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "frame-ancestors https://newforestcountrystore.co.uk"
+        }
+      ]
     }
   ]
 }
