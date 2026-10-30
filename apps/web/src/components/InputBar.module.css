@@ -12,6 +12,9 @@
 .textarea {
   flex: 1 1 auto;
   font: inherit;
+  /* iOS Safari zooms the page on focus for inputs under 16px; the
+   * embed's body text is 15px, so pin the input explicitly. */
+  font-size: 16px;
   padding: 0.625rem 0.875rem;
   border: 1px solid var(--color-border);
   border-radius: 10px;

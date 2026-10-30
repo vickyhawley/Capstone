@@ -65,3 +65,88 @@ body {
 .embed-error strong {
   color: var(--color-error);
 }
+
+/* Article 50 notice above the chat. Full notice until dismissed,
+ * then a one-line label that can re-open it (see embed.tsx). */
+.embed-disclosure {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 12px 8px 12px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-muted);
+  border-radius: 12px;
+}
+
+.embed-disclosure-text {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 14px;
+}
+
+.embed-disclosure-dismiss {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  margin: -8px 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.embed-disclosure-dismiss:hover,
+.embed-disclosure-dismiss:focus-visible {
+  background: var(--color-subtle);
+  color: var(--color-text);
+}
+
+/* "More"/"Less" toggle for the disclosure's detail. Desktop shows the
+ * full text, so the toggle only exists on phone widths. */
+.embed-disclosure-more {
+  display: none;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .embed-disclosure-rest--collapsed {
+    display: none;
+  }
+
+  .embed-disclosure-more {
+    display: inline;
+  }
+}
+
+.embed-disclosure-collapsed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--color-muted);
+}
+
+.embed-disclosure-link {
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

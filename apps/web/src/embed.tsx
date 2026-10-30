@@ -3,62 +3,142 @@
  *
  * The iframe loads /embed; this bundle renders Chat and nothing else
  * (no site header, no About-panel toggle). The Article 50 disclosure
- * is seeded as the first bot message so it reads before the user's
+ * renders as a notice above the chat so it reads before the user's
  * first question — a side-panel disclosure is too easy to miss on a
  * 400x600 panel.
  *
- * Loading posture: fetch /api/about once, build the seed message
- * from the response, then render Chat. If /api/about is down we
- * degrade to a short inline notice and still render Chat without a
- * seed — the main pipeline is probably still live and the panel is
- * useful without the preamble.
+ * The notice is dismissable, but dismissing collapses it to a
+ * one-line "AI assistant" label rather than removing it: ADR-0012
+ * requires the disclosure before the first turn *or* in a persistent
+ * surface, and the label keeps the second condition true for a
+ * customer who dismisses and returns to the tab later. Dismissal is
+ * remembered for the browser session only, so a new visit sees the
+ * full notice again.
+ *
+ * Loading posture: fetch /api/about once, then render the notice and
+ * Chat. If /api/about is down we degrade to a short inline notice and
+ * still render Chat — the main pipeline is probably still live and
+ * the panel is useful without the full disclosure text.
  */
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { ApiError, getAbout } from './api/client.js';
-import type { AnswerResponse } from './api/types.js';
 import { Chat } from './components/Chat.js';
-import type { Message } from './components/Message.js';
 import './embed.css';
 
-function buildDisclosureSeed(disclosure: string): Message {
-  const synthetic: AnswerResponse = {
-    answer: disclosure,
-    citations: [],
-    retrieved_chunk_ids: [],
-    refusal_reason: null,
-    trace_id: null,
-    intent: null,
-    adversarial_suspected: false,
-    adversarial_pattern: null,
-    product_query: null,
-    behavior: 'answer',
-    escalation_target: null,
-    tool_calls: [],
-    substitute_handles: [],
-    delivery_zone_status: null,
-    product_links: [],
-    conversation_id: null,
-    rewritten_query: null,
-  };
-  return { kind: 'bot', id: 'disclosure-seed', response: synthetic };
+const DISMISSED_KEY = 'nfcs-ai-disclosure-dismissed';
+
+// sessionStorage can throw (blocked third-party storage in an iframe,
+// private mode), so both accessors fall back to "not dismissed".
+function readDismissed(): boolean {
+  try {
+    return window.sessionStorage.getItem(DISMISSED_KEY) === '1';
+  } catch {
+    return false;
+  }
 }
 
-type SeedState =
+function writeDismissed(dismissed: boolean): void {
+  try {
+    if (dismissed) {
+      window.sessionStorage.setItem(DISMISSED_KEY, '1');
+    } else {
+      window.sessionStorage.removeItem(DISMISSED_KEY);
+    }
+  } catch {
+    // Storage unavailable — dismissal just won't survive a reload.
+  }
+}
+
+// Splits off the first sentence ("You're chatting with an AI
+// assistant, not a member of the NFCS team.") — the core disclosure,
+// always shown. The rest is hidden behind "More" on phones only
+// (CSS-gated), so the notice doesn't swallow a small screen.
+function splitLead(disclosure: string): { lead: string; rest: string } {
+  const breakAt = disclosure.indexOf('. ');
+  if (breakAt === -1) return { lead: disclosure, rest: '' };
+  return { lead: disclosure.slice(0, breakAt + 1), rest: disclosure.slice(breakAt + 2) };
+}
+
+function DisclosureNotice({ disclosure }: { readonly disclosure: string }) {
+  const [dismissed, setDismissed] = useState<boolean>(readDismissed);
+  const [expanded, setExpanded] = useState(false);
+  const { lead, rest } = splitLead(disclosure);
+
+  function updateDismissed(next: boolean): void {
+    setDismissed(next);
+    writeDismissed(next);
+  }
+
+  if (dismissed) {
+    return (
+      <div className="embed-disclosure-collapsed">
+        <span>You're chatting with an AI assistant.</span>
+        <button
+          type="button"
+          className="embed-disclosure-link"
+          onClick={() => updateDismissed(false)}
+        >
+          About this assistant
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <aside className="embed-disclosure" aria-label="AI disclosure">
+      <p className="embed-disclosure-text">
+        {lead}
+        {rest ? (
+          <>
+            {' '}
+            <span
+              className={
+                expanded
+                  ? 'embed-disclosure-rest'
+                  : 'embed-disclosure-rest embed-disclosure-rest--collapsed'
+              }
+            >
+              {rest}
+            </span>
+            <button
+              type="button"
+              className="embed-disclosure-more"
+              onClick={() => setExpanded(!expanded)}
+              aria-expanded={expanded}
+            >
+              {expanded ? 'Less' : 'More'}
+            </button>
+          </>
+        ) : null}
+      </p>
+      <button
+        type="button"
+        className="embed-disclosure-dismiss"
+        onClick={() => updateDismissed(true)}
+        aria-label="Dismiss AI notice"
+      >
+        ×
+      </button>
+    </aside>
+  );
+}
+
+type AboutState =
   | { readonly kind: 'loading' }
-  | { readonly kind: 'ready'; readonly seed: readonly Message[] }
+  | { readonly kind: 'ready'; readonly disclosure: string }
   | { readonly kind: 'error'; readonly message: string };
 
 function Embed() {
-  const [state, setState] = useState<SeedState>({ kind: 'loading' });
+  const [state, setState] = useState<AboutState>({ kind: 'loading' });
 
   useEffect(() => {
     let cancelled = false;
     getAbout()
       .then((about) => {
         if (cancelled) return;
-        setState({ kind: 'ready', seed: [buildDisclosureSeed(about.disclosure)] });
+        setState({ kind: 'ready', disclosure: about.disclosure });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -94,7 +174,8 @@ function Embed() {
 
   return (
     <div className="embed-shell">
-      <Chat initialMessages={state.seed} />
+      <DisclosureNotice disclosure={state.disclosure} />
+      <Chat />
     </div>
   );
 }

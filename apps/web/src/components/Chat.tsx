@@ -37,40 +37,32 @@ const EXAMPLE_CATEGORIES: readonly {
   },
 ];
 
-export interface ChatProps {
-  /** Pre-seeded messages. The embed surface uses this to prepend a
-   *  bot bubble carrying the Article 50 disclosure so the AI
-   *  disclosure is the first thing in the conversation (not just a
-   *  side-panel detail). Default: no seed. */
-  readonly initialMessages?: readonly Message[];
-}
-
 /**
  * Multi-turn chat area. Local component state renders the history;
  * the API layer (GW-16, ADR-0017) owns the authoritative conversation
  * store — the client mirrors it for UI purposes and quotes the
  * server-issued `conversation_id` on each subsequent request.
  */
-export function Chat({ initialMessages = [] }: ChatProps = {}) {
-  const [messages, setMessages] = useState<readonly Message[]>(initialMessages);
+export function Chat() {
+  const [messages, setMessages] = useState<readonly Message[]>([]);
   const [pending, setPending] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const scrollAnchor = useRef<HTMLDivElement>(null);
 
   function handleNewConversation(): void {
     if (pending) return;
-    // Reset to the seed, not []: on the embed surface the seed is
-    // the Article 50 disclosure, and "New conversation" shouldn't
-    // make the compliance preamble vanish.
-    setMessages(initialMessages);
+    setMessages([]);
     setConversationId(null);
   }
 
   // Auto-scroll to the newest message. Runs on messages length change
   // rather than every render so it doesn't fight with the user's own
   // scroll if they've paged up. `scrollIntoView` is guarded because
-  // jsdom (test environment) doesn't implement it.
+  // jsdom (test environment) doesn't implement it. Skipped when empty:
+  // scrolling on mount pushes the starter pills' headline out of view
+  // on short (mobile) screens.
   useEffect(() => {
+    if (messages.length === 0) return;
     scrollAnchor.current?.scrollIntoView?.({ behavior: 'smooth', block: 'end' });
   }, [messages.length]);
 
@@ -202,9 +194,7 @@ export function Chat({ initialMessages = [] }: ChatProps = {}) {
     void handleSubmit(query);
   }
 
-  // Seed messages (the embed's disclosure) aren't a conversation yet:
-  // keep the starter pills visible until the customer sends something.
-  const hasConversation = messages.length > initialMessages.length;
+  const hasConversation = messages.length > 0;
 
   return (
     <div className={styles.chat}>
