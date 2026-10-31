@@ -400,10 +400,19 @@ async function main(): Promise<void> {
   const groups = groupByHandle(rows);
 
   let productIndex = 0;
+  const skippedInactive: string[] = [];
   for (const [handle, group] of groups) {
     productIndex++;
     const productRow = group.find((row) => (row['Title'] ?? '').trim() !== '');
     if (!productRow) {
+      continue;
+    }
+    // Only customer-visible products are catalogue. Draft / unlisted /
+    // archived rows would otherwise be answered as "we stock it". An
+    // export without a Status column predates the filter: treat as active.
+    const status = (productRow['Status'] ?? 'active').trim().toLowerCase();
+    if (status !== 'active') {
+      skippedInactive.push(handle);
       continue;
     }
     const productType = (productRow['Type'] ?? '').trim();
@@ -481,6 +490,14 @@ async function main(): Promise<void> {
     if (productIndex % 25 === 0) {
       console.error(`[${productIndex}/${groups.size}] progressing…`);
     }
+  }
+
+  if (skippedInactive.length > 0) {
+    // Skipping only stops new writes — rows from an earlier ingest stay
+    // in Supabase until deleted by source_ref.
+    console.error(
+      `Skipped ${skippedInactive.length} non-active product(s): ${skippedInactive.join(', ')}`,
+    );
   }
 
   const elapsedSec = ((Date.now() - t0) / 1000).toFixed(1);
