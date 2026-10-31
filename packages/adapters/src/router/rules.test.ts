@@ -305,11 +305,31 @@ describe('router rules layer', () => {
       }
     });
 
+    describe('delivery', () => {
+      const hits = [
+        'how much is delivery?',
+        'what are your delivery costs?',
+        'do you charge for delivery?',
+        'is delivery free',
+        'do you do free delivery',
+        'how much does it cost to deliver to BH24',
+        'what are the postage charges',
+        'is there a minimum delivery',
+        "what's the minimum order",
+      ];
+      for (const q of hits) {
+        it(`matches: "${q}"`, () => {
+          expect(extractShopInfoTopic(q)).toBe('delivery');
+        });
+      }
+    });
+
     describe('no match', () => {
       const misses = [
         'do you stock hay',
         'my horse has colic',
-        'is there a minimum delivery',
+        'do you deliver to BH24',
+        'how much is a bale of haylage',
         'hi',
       ];
       for (const q of misses) {

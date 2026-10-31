@@ -17,6 +17,7 @@
  * |-----------|-----------------------------------|-------------------------------|-----------------------------------------------------------------------|---------|
  * | product   | productQuery present              | product.stock_lookup          | product.substitute_lookup if stockStatus in {orderable, unavailable}  | done    |
  * | product   | productQuery absent               | done                          | —                                                                     | —       |
+ * | logistics | postcode + shopInfoTopic=delivery | logistics.delivery_zone       | logistics.shop_info                                                   | done    |
  * | logistics | postcode present                  | logistics.delivery_zone       | done                                                                  | —       |
  * | logistics | shopInfoTopic set, no postcode    | logistics.shop_info           | done                                                                  | —       |
  * | logistics | neither present                   | done                          | —                                                                     | —       |
@@ -24,11 +25,13 @@
  *
  * Priority rule for logistics with BOTH postcode and shopInfoTopic
  * present ("what's your number for delivery to BH24?"): postcode
- * wins. Delivery-zone answers the specific delivery question;
- * synthesis can still surface shop contact info from the guides
- * corpus if useful. shop_info is not dispatched in this case to
- * avoid double-round-tripping when the user's specific ask is
- * about delivery.
+ * wins. Delivery-zone answers the specific delivery question, and
+ * shop_info is not dispatched, to avoid double-round-tripping.
+ *
+ * Exception: topic 'delivery' ("how much is delivery to BH24?")
+ * chains shop_info after delivery_zone. The zone result carries no
+ * cost, and cost is what the customer asked for — without the
+ * second call synthesis says "I'm not sure about delivery charges".
  *
  * Non-product/non-logistics intents (welfare-clinical, out-of-scope,
  * service-referral, fit) never reach this planner — the safety gate
@@ -75,7 +78,11 @@ export class RouteBasedPlanner implements Planner {
     }
 
     if (routerDecision.intent === 'logistics' && routerDecision.postcode) {
-      return this.planLogistics(routerDecision.postcode, toolResults);
+      return this.planLogistics(
+        routerDecision.postcode,
+        routerDecision.shopInfoTopic,
+        toolResults,
+      );
     }
 
     if (
@@ -142,10 +149,17 @@ export class RouteBasedPlanner implements Planner {
 
   private planLogistics(
     postcode: string,
+    shopInfoTopic: string | undefined,
     toolResults: readonly ToolInvocationRecord[],
   ): PlannerDecision {
     const deliveryCall = toolResults.find((r) => r.call.name === TOOL_DELIVERY_ZONE);
     if (deliveryCall) {
+      // delivery_zone answers "do you reach me", not "what does it
+      // cost" — the cost lives in shop_info's deliverySummary. A
+      // postcode + cost question needs both.
+      if (shopInfoTopic === 'delivery') {
+        return this.planShopInfo(shopInfoTopic, toolResults);
+      }
       return { kind: 'done', rationale: 'delivery_zone dispatched' };
     }
     return {

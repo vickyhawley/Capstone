@@ -36,7 +36,7 @@ import type { ShopInfoTopic } from '../router/rules.js';
 
 const TOOL_NAME = 'logistics.shop_info';
 
-const VALID_TOPICS: readonly ShopInfoTopic[] = ['contact', 'hours', 'address', 'ordering'];
+const VALID_TOPICS: readonly ShopInfoTopic[] = ['contact', 'hours', 'address', 'ordering', 'delivery'];
 
 export interface ShopAddress {
   readonly locality: string;
@@ -120,7 +120,7 @@ export class ShopInfoTool implements ToolRegistry {
   private readonly definition: ToolDefinition = {
     name: TOOL_NAME,
     description:
-      "Return the shop's canonical contact details, opening hours, address, and how-to-order lines. Fires for logistics-intent queries asking 'what is your number', 'when are you open', 'where are you', or 'how do I place an order'. The tool returns all fields; the caller filters via the optional `topic` hint.",
+      "Return the shop's canonical contact details, opening hours, address, and how-to-order lines. Fires for logistics-intent queries asking 'what is your number', 'when are you open', 'where are you', 'how do I place an order', or 'how much is delivery'. The tool returns all fields; the caller filters via the optional `topic` hint.",
     schema: {
       type: 'object',
       additionalProperties: false,
@@ -129,7 +129,7 @@ export class ShopInfoTool implements ToolRegistry {
           type: 'string',
           enum: [...VALID_TOPICS],
           description:
-            "Optional topic hint — 'contact', 'hours', 'address', or 'ordering'. Does not filter the response; used for observability + downstream ranking.",
+            "Optional topic hint — 'contact', 'hours', 'address', 'ordering', or 'delivery'. Does not filter the response; used for observability + downstream ranking.",
         },
       },
       required: [],

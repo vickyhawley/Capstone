@@ -249,8 +249,8 @@ export function extractPostcode(query: string): string | null {
 // question. The abstain copy then said "give the shop a call"
 // without giving the number — a real UX failure.
 //
-// The extractor below catches contact / hours / address / ordering
-// phrasings and returns a topic hint. The router (see hybrid-
+// The extractor below catches contact / hours / address / ordering /
+// delivery-cost phrasings and returns a topic hint. The router (see hybrid-
 // router.ts) treats a non-null topic as a signal to set intent=
 // logistics via rule-shortcut, bypassing the LLM. Downstream the
 // Tier-1 planner sees `RouterDecision.shopInfoTopic` and dispatches
@@ -262,7 +262,7 @@ export function extractPostcode(query: string): string | null {
 // log record why the tool fired, which matters for the "why did it
 // route this way" debug story.
 
-export type ShopInfoTopic = 'contact' | 'hours' | 'address' | 'ordering';
+export type ShopInfoTopic = 'contact' | 'hours' | 'address' | 'ordering' | 'delivery';
 
 interface ShopInfoRule {
   readonly topic: ShopInfoTopic;
@@ -294,6 +294,17 @@ const SHOP_INFO_RULES: readonly ShopInfoRule[] = [
     // "how do i order", "can i order online", "how to place an order"
     pattern:
       /\bhow\s+(?:do\s+i|can\s+i|to)\s+(?:place\s+(?:an\s+)?order|order|buy)\b|\bcan\s+i\s+order\s+(?:online|by\s+phone|via)\b/i,
+  },
+  {
+    topic: 'delivery',
+    // Delivery *cost* questions — "how much is delivery", "do you
+    // charge for delivery", "is delivery free", "minimum order for
+    // delivery". Without this they reached the planner with no
+    // topic and no postcode, no tool fired, and synthesis said "I'm
+    // not sure" despite deliverySummary holding the answer. "Do you
+    // deliver to X" is not here — that's the delivery_zone path.
+    pattern:
+      /\bhow\s+much\b[^?.!]*\b(?:delivery|deliver|postage|shipping)\b|\b(?:delivery|postage|shipping)\s+(?:cost|costs|charge|charges|fee|fees|price|prices|free)\b|\b(?:charge|pay)\s+(?:extra\s+)?for\s+(?:delivery|postage|shipping)\b|\bfree\s+(?:delivery|postage|shipping)\b|\bminimum\b[^?.!]*\b(?:delivery|order)\b/i,
   },
 ];
 

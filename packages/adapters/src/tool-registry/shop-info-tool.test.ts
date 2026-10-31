@@ -60,6 +60,7 @@ describe('ShopInfoTool', () => {
         'hours',
         'address',
         'ordering',
+        'delivery',
       ]);
     });
   });

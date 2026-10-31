@@ -92,8 +92,8 @@ export interface RouterDecision {
   readonly postcode?: string;
   /**
    * Sprint 4 (shop-info tool). Set when the query asks for the
-   * shop's contact details, opening hours, address, or how to
-   * order. When present, the planner dispatches
+   * shop's contact details, opening hours, address, how to
+   * order, or what delivery costs. When present, the planner dispatches
    * `logistics.shop_info { topic }` — provided no postcode is
    * also present (postcode wins because it names a delivery-zone
    * question specifically, and shop_info can be surfaced by the
@@ -102,7 +102,7 @@ export interface RouterDecision {
    * Topic values are hints for downstream ranking (the tool
    * returns the full struct either way), not filters.
    */
-  readonly shopInfoTopic?: 'contact' | 'hours' | 'address' | 'ordering';
+  readonly shopInfoTopic?: 'contact' | 'hours' | 'address' | 'ordering' | 'delivery';
 }
 
 export interface Router {

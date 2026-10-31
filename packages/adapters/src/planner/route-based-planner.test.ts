@@ -211,6 +211,37 @@ describe('RouteBasedPlanner', () => {
       expect(decision.toolCall.name).toBe('logistics.delivery_zone');
     });
 
+    it('postcode + delivery topic: shop_info follows delivery_zone for the cost', async () => {
+      const p = new RouteBasedPlanner();
+      const afterZone = await p.plan(
+        makeContext({
+          intent: 'logistics',
+          postcode: 'BH24',
+          shopInfoTopic: 'delivery',
+          toolResults: [
+            toolRecord('logistics.delivery_zone', { ok: true, value: { status: 'within_radius' } }),
+          ],
+        }),
+      );
+      expect(afterZone.kind).toBe('call-tool');
+      if (afterZone.kind !== 'call-tool') return;
+      expect(afterZone.toolCall.name).toBe('logistics.shop_info');
+      expect(afterZone.toolCall.args).toEqual({ topic: 'delivery' });
+
+      const afterBoth = await p.plan(
+        makeContext({
+          intent: 'logistics',
+          postcode: 'BH24',
+          shopInfoTopic: 'delivery',
+          toolResults: [
+            toolRecord('logistics.delivery_zone', { ok: true, value: { status: 'within_radius' } }),
+            toolRecord('logistics.shop_info', { ok: true, value: { topic: 'delivery', info: {} } }),
+          ],
+        }),
+      );
+      expect(afterBoth.kind).toBe('done');
+    });
+
     it('iter 1 after shop_info: done (single-tool dispatch)', async () => {
       const p = new RouteBasedPlanner();
       const toolResults = [
